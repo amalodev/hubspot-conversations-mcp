@@ -1,0 +1,47 @@
+{
+  "manifest_version": "0.2",
+  "name": "hubspot-conversations-mcp",
+  "display_name": "HubSpot Conversations",
+  "version": "0.4.0",
+  "description": "Read and send HubSpot Conversations messages: threads, replies, inboxes, channels, actors and custom channels.",
+  "long_description": "MCP server for the HubSpot Conversations API with 1:1 tool parity with the Arcade.dev HubSpot Conversations toolkit (24 tools). Retrieve and filter conversation threads, read message history, send replies and internal comments, manage thread status, and integrate custom channels (publish external messages, delivery status, channel accounts).",
+  "author": {
+    "name": "Kristian Frølund",
+    "email": "kristian@amalo.dk"
+  },
+  "license": "MIT",
+  "keywords": ["hubspot", "conversations", "inbox", "helpdesk", "crm"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "HUBSPOT_ACCESS_TOKEN": "${user_config.hubspot_access_token}",
+        "HUBSPOT_DEFAULT_SENDER_ACTOR_ID": "${user_config.default_sender_actor_id}"
+      }
+    }
+  },
+  "user_config": {
+    "hubspot_access_token": {
+      "type": "string",
+      "title": "HubSpot access token",
+      "description": "Private app token (pat-...) with the conversations.read and conversations.write scopes (plus conversations.custom_channels.* for custom channel tools).",
+      "sensitive": true,
+      "required": true
+    },
+    "default_sender_actor_id": {
+      "type": "string",
+      "title": "Default sender actor ID",
+      "description": "Optional. Used as sender for SendConversationMessage when not passed explicitly, e.g. A-12345 (A-<your HubSpot user id>).",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

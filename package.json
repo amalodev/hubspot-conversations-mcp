@@ -1,0 +1,54 @@
+{
+  "name": "hubspot-conversations-mcp",
+  "version": "0.4.0",
+  "description": "MCP server for the HubSpot Conversations API — read threads and messages, send replies and comments, and manage conversation threads from any MCP client. 1:1 tool parity with the Arcade.dev HubSpot Conversations toolkit.",
+  "type": "module",
+  "bin": {
+    "hubspot-conversations-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "manifest.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "bundle": "npm run build && npx -y @anthropic-ai/mcpb pack",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "hubspot",
+    "conversations",
+    "inbox",
+    "helpdesk"
+  ],
+  "author": "Kristian Frølund <kristian@amalo.dk>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amalodev/hubspot-conversations-mcp.git"
+  },
+  "homepage": "https://github.com/amalodev/hubspot-conversations-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/amalodev/hubspot-conversations-mcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
