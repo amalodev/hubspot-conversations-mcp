@@ -197,18 +197,18 @@ function waitForCallback(
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
       if (error) {
-        response.writeHead(200, { "content-type": "text/html" });
+        response.writeHead(200, { "content-type": "text/html", connection: "close" });
         response.end(htmlResponse("Authorization denied", "You can close this window."));
         clearTimeout(timeout);
         reject(new Error(`HubSpot returned an error: ${error}`));
         return;
       }
       if (!code || state !== expectedState) {
-        response.writeHead(400, { "content-type": "text/html" });
+        response.writeHead(400, { "content-type": "text/html", connection: "close" });
         response.end(htmlResponse("Invalid callback", "Missing code or state mismatch — try again."));
         return;
       }
-      response.writeHead(200, { "content-type": "text/html" });
+      response.writeHead(200, { "content-type": "text/html", connection: "close" });
       response.end(htmlResponse("Signed in ✔", "You can close this window and return to the terminal."));
       clearTimeout(timeout);
       resolve(code);
@@ -280,7 +280,10 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
     );
     return store;
   } finally {
+    // close() alone waits for the browser's keep-alive socket and would hang
+    // the process after a successful login — force-close open connections.
     server.close();
+    server.closeAllConnections();
   }
 }
 
