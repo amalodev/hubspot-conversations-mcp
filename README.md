@@ -88,8 +88,10 @@ The repo ships a **stateless OAuth broker** ([api/](api/)) — the only place th
 ### Per user
 
 ```bash
-npx -y hubspot-conversations-mcp login --broker-url https://your-broker.vercel.app
+npx -y hubspot-conversations-mcp login
 ```
+
+The default broker is `https://hubspot-conversations-mcp.vercel.app`. Its HubSpot app is private-distribution and allowlisted, so only approved portals can complete a login — other orgs deploy their own broker (step 2 above) and pass `--broker-url` / set `HUBSPOT_OAUTH_BROKER_URL`.
 
 The browser opens for the HubSpot consent screen; tokens are stored in `~/.hubspot-conversations-mcp/tokens.json` (0600) and auto-refreshed through the broker. Then register the server without any token:
 
@@ -130,7 +132,7 @@ npm publish
 | Environment variable | Required | Description |
 |---|---|---|
 | `HUBSPOT_ACCESS_TOKEN` | (✅) | Service key (`pat-...`), legacy private app token, or OAuth2 access token. Optional when a per-user OAuth login exists on the machine; takes precedence when both are present |
-| `HUBSPOT_OAUTH_BROKER_URL` | | Default broker URL for the `login` command |
+| `HUBSPOT_OAUTH_BROKER_URL` | | Broker URL for the `login` command (default `https://hubspot-conversations-mcp.vercel.app`) |
 | `HUBSPOT_TOKEN_STORE_PATH` | | OAuth token store location (default `~/.hubspot-conversations-mcp/tokens.json`) |
 | `HUBSPOT_DEFAULT_SENDER_ACTOR_ID` | | Default sender for `SendConversationMessage`, e.g. `A-12345` (agent actor = `A-<hubspot user id>`) |
 | `HUBSPOT_BASE_URL` | | Default `https://api.hubapi.com` |

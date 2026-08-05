@@ -8,7 +8,7 @@ import {
   type ClientId,
   type InstallOptions,
 } from "./install.js";
-import { runLogin } from "./oauth.js";
+import { DEFAULT_BROKER_URL, runLogin } from "./oauth.js";
 import { SERVER_VERSION } from "./server.js";
 
 export interface SetupFlags {
@@ -106,9 +106,9 @@ only need its URL. The browser will open for the HubSpot consent screen.`,
   );
   const brokerUrl = ensureAnswered(
     await p.text({
-      message: "Your org's OAuth broker URL",
-      placeholder: "https://your-broker.vercel.app",
-      initialValue: process.env.HUBSPOT_OAUTH_BROKER_URL?.trim() ?? "",
+      message: "OAuth broker URL",
+      placeholder: DEFAULT_BROKER_URL,
+      initialValue: process.env.HUBSPOT_OAUTH_BROKER_URL?.trim() ?? DEFAULT_BROKER_URL,
       validate: (value) => {
         if (!value?.trim()) return "The broker URL is required for OAuth login";
         try {

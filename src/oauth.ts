@@ -10,6 +10,13 @@ import type { HubSpotConfig } from "./config.js";
 
 export const DEFAULT_CALLBACK_PORT = 4573;
 export const DEFAULT_SCOPES = ["conversations.read", "conversations.write"];
+/**
+ * Default OAuth broker. The backing HubSpot app is private-distribution and
+ * allowlisted, so only approved portals can complete a login against it —
+ * other orgs deploy their own broker and override with --broker-url or
+ * HUBSPOT_OAUTH_BROKER_URL.
+ */
+export const DEFAULT_BROKER_URL = "https://hubspot-conversations-mcp.vercel.app";
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface TokenStore {

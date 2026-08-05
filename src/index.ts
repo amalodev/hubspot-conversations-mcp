@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { PACKAGE_NAME, parseClientSelection, runInstall, type InstallOptions } from "./install.js";
 import {
   clearTokenStore,
+  DEFAULT_BROKER_URL,
   DEFAULT_CALLBACK_PORT,
   DEFAULT_SCOPES,
   introspectAccessToken,
@@ -42,7 +43,8 @@ Install options:
   --dry-run                    Print what would happen without changing anything
 
 Login options:
-  --broker-url <url>           Your org's OAuth broker (or set HUBSPOT_OAUTH_BROKER_URL)
+  --broker-url <url>           OAuth broker (default: ${DEFAULT_BROKER_URL};
+                               or set HUBSPOT_OAUTH_BROKER_URL)
   --client-id <id>             Skip fetching the client ID from the broker
   --scopes <a,b>               Scopes to request (default: ${DEFAULT_SCOPES.join(",")})
   --port <n>                   Local callback port (default: ${DEFAULT_CALLBACK_PORT} — must match
@@ -51,7 +53,7 @@ Login options:
 
 Examples:
   npx ${PACKAGE_NAME} setup
-  npx ${PACKAGE_NAME} login --broker-url https://your-broker.vercel.app
+  npx ${PACKAGE_NAME} login
   npx ${PACKAGE_NAME} install --client all --oauth
   npx ${PACKAGE_NAME} install --client all --token pat-eu1-... --sender-actor-id A-12345
 
@@ -148,13 +150,8 @@ async function runLoginCli(argv: string[]): Promise<void> {
       "no-open": { type: "boolean", default: false },
     },
   });
-  const brokerUrl = values["broker-url"] ?? process.env.HUBSPOT_OAUTH_BROKER_URL?.trim();
-  if (!brokerUrl) {
-    throw new Error(
-      "--broker-url is required (or set HUBSPOT_OAUTH_BROKER_URL). This is your org's deployed " +
-        "OAuth broker, e.g. https://your-broker.vercel.app.",
-    );
-  }
+  const brokerUrl =
+    values["broker-url"] ?? process.env.HUBSPOT_OAUTH_BROKER_URL?.trim() ?? DEFAULT_BROKER_URL;
   const port = values.port ? Number(values.port) : undefined;
   if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new Error("--port must be an integer between 1 and 65535.");
