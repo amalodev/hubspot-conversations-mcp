@@ -1,12 +1,14 @@
-import * as readline from "node:readline";
+import * as p from "@clack/prompts";
 import {
   ALL_CLIENTS,
   MCP_SERVER_KEY,
+  PACKAGE_NAME,
   parseClientSelection,
   runInstall,
   type ClientId,
   type InstallOptions,
 } from "./install.js";
+import { SERVER_VERSION } from "./server.js";
 
 export interface SetupFlags {
   scope?: string;
@@ -15,57 +17,139 @@ export interface SetupFlags {
   dryRun: boolean;
 }
 
-const TOKEN_GUIDE = `
+const TOKEN_STEPS = `1. Open https://app.hubspot.com → Development → Keys → Service Keys
+2. Click "Create service key" and name it (e.g. "${PACKAGE_NAME}")
+3. Add the scopes:
+     • conversations.read
+     • conversations.write
+     • conversations.custom_channels.read / .write  (custom channels only)
+4. Click "Create", open the key and click "Show" — copy it (starts with "pat-")
+
+Legacy private app tokens and OAuth2 access tokens also work.
+Docs: https://developers.hubspot.com/docs/apps/developer-platform/
+      build-apps/authentication/account-service-keys`;
+
+const CLIENT_OPTIONS: Array<{ value: ClientId; label: string; hint: string }> = [
+  { value: "claude-desktop", label: "Claude Desktop", hint: "merges claude_desktop_config.json" },
+  { value: "claude-code", label: "Claude Code", hint: "runs claude mcp add" },
+  { value: "hermes", label: "Hermes (Nous Research)", hint: "merges ~/.hermes/config.yaml" },
+];
+
+function nextSteps(clients: ClientId[], scope: string | undefined): string {
+  const lines: string[] = [];
+  if (clients.includes("claude-desktop")) {
+    lines.push("Claude Desktop   restart the app to load the server");
+  }
+  if (clients.includes("claude-code")) {
+    lines.push(`Claude Code      available in new sessions (scope: ${scope ?? "local"})`);
+  }
+  if (clients.includes("hermes")) {
+    lines.push(`Hermes           hermes mcp test ${MCP_SERVER_KEY}  (or /reload-mcp)`);
+  }
+  return lines.join("\n");
+}
+
+function buildInstallOptions(
+  flags: SetupFlags,
+  token: string,
+  senderActorId: string | undefined,
+  clients: ClientId[],
+  log?: (message: string) => void,
+  logError?: (message: string) => void,
+): InstallOptions {
+  return {
+    clients,
+    token,
+    senderActorId,
+    // Setup registers Claude Code across all projects unless overridden.
+    scope: flags.scope ?? "user",
+    configPath: flags.configPath,
+    hermesConfigPath: flags.hermesConfigPath,
+    dryRun: flags.dryRun,
+    log,
+    logError,
+  };
+}
+
+// --- Interactive wizard (TTY) — powered by @clack/prompts --------------------
+
+/** Unwrap a clack prompt result, exiting cleanly if the user pressed Ctrl+C/Esc. */
+function ensureAnswered<T>(value: T | symbol): T {
+  if (p.isCancel(value)) {
+    p.cancel("Setup cancelled — nothing was changed.");
+    process.exit(1);
+  }
+  return value as T;
+}
+
+async function runInteractiveSetup(flags: SetupFlags): Promise<void> {
+  p.intro(`${PACKAGE_NAME} v${SERVER_VERSION} — setup`);
+  p.note(TOKEN_STEPS, "Step 1/3 · Create a HubSpot service key");
+
+  const token = ensureAnswered(
+    await p.password({
+      message: "Paste your HubSpot service key",
+      validate: (value) => (!value || value.trim() === "" ? "The service key cannot be empty" : undefined),
+    }),
+  ).trim();
+  if (!token.startsWith("pat-")) {
+    p.log.warn('Service keys and legacy tokens start with "pat-" — assuming an OAuth access token.');
+  }
+
+  const senderRaw = ensureAnswered(
+    await p.text({
+      message: "Default sender actor ID for replies (optional)",
+      placeholder: "A-12345 — press Enter to skip",
+      defaultValue: "",
+    }),
+  );
+  const senderActorId = senderRaw.trim() || undefined;
+
+  const clients = ensureAnswered(
+    await p.multiselect({
+      message: "Step 2/3 · Which agents should be configured? (↑/↓ to move, space to toggle, enter to confirm)",
+      options: CLIENT_OPTIONS,
+      initialValues: [...ALL_CLIENTS],
+      required: true,
+    }),
+  );
+
+  p.log.step(
+    `Step 3/3 · Installing for: ${clients.join(", ")}${flags.dryRun ? " (dry-run)" : ""}`,
+  );
+  const options = buildInstallOptions(
+    flags,
+    token,
+    senderActorId,
+    clients,
+    (message) => p.log.info(message),
+    (message) => p.log.error(message),
+  );
+  try {
+    runInstall(options);
+  } catch (error) {
+    p.log.error(error instanceof Error ? error.message : String(error));
+    p.cancel("Setup failed — see the error above.");
+    process.exit(1);
+  }
+
+  const summary = nextSteps(clients, options.scope);
+  if (summary) p.note(summary, "Next steps");
+  p.outro(`Done — "${MCP_SERVER_KEY}" runs via npx -y ${PACKAGE_NAME}`);
+}
+
+// --- Scripted mode (piped stdin) ---------------------------------------------
+
+const PIPE_GUIDE = `
 HubSpot Conversations MCP — setup
 =================================
 
 Step 1/3 · Create a HubSpot service key
-  1. Open https://app.hubspot.com and go to: Development → Keys → Service Keys
-  2. Click "Create service key" and give it a name (e.g. "hubspot-conversations-mcp")
-  3. Add the scopes:
-       • conversations.read
-       • conversations.write
-       • conversations.custom_channels.read / .write  (only if you'll use custom channels)
-  4. Click "Create", open the key and click "Show" — copy the key (starts with "pat-")
-
-  Legacy private app tokens and OAuth2 access tokens with the same scopes also work.
-  Docs: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys
+${TOKEN_STEPS}
 `;
 
 interface Prompter {
   ask(prompt: string): Promise<string>;
-  askHidden(prompt: string): Promise<string>;
-  close(): void;
-}
-
-/** Interactive prompter for a real terminal; hides token input while typing. */
-function createTtyPrompter(): Prompter {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (prompt: string): Promise<string> =>
-    new Promise((resolve) => rl.question(prompt, resolve));
-  const askHidden = (prompt: string): Promise<string> =>
-    new Promise((resolve) => {
-      const target = rl as readline.Interface & {
-        output: NodeJS.WritableStream;
-        _writeToOutput?: (chunk: string) => void;
-      };
-      const original = target._writeToOutput?.bind(target);
-      target._writeToOutput = (chunk: string) => {
-        // Echo the prompt itself and newlines, mask everything typed.
-        if (chunk.includes(prompt) || chunk === "\r\n" || chunk === "\n") {
-          target.output.write(chunk);
-        } else {
-          target.output.write("*");
-        }
-      };
-      rl.question(prompt, (answer) => {
-        if (original) target._writeToOutput = original;
-        else delete target._writeToOutput;
-        target.output.write("\n");
-        resolve(answer);
-      });
-    });
-  return { ask, askHidden, close: () => rl.close() };
 }
 
 /**
@@ -78,31 +162,32 @@ async function createPipePrompter(): Promise<Prompter> {
   for await (const chunk of process.stdin) raw += chunk;
   const lines = raw.split(/\r?\n/);
   let index = 0;
-  const ask = async (prompt: string): Promise<string> => {
-    const answer = index < lines.length ? lines[index++] : "";
-    process.stdout.write(`${prompt}${answer ? "<from stdin>" : ""}\n`);
-    return answer;
+  return {
+    ask: async (prompt: string): Promise<string> => {
+      const answer = index < lines.length ? lines[index++] : "";
+      process.stdout.write(`${prompt}${answer ? "<from stdin>" : ""}\n`);
+      return answer;
+    },
   };
-  return { ask, askHidden: ask, close: () => {} };
 }
 
-async function askToken(prompter: Prompter): Promise<string> {
+async function askTokenPiped(prompter: Prompter): Promise<string> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const token = (await prompter.askHidden("Paste your HubSpot service key: ")).trim();
+    const token = (await prompter.ask("Paste your HubSpot service key: ")).trim();
     if (token) {
       if (!token.startsWith("pat-")) {
         console.log(
-          "  Note: service keys and legacy tokens start with \"pat-\" — assuming an OAuth access token.",
+          '  Note: service keys and legacy tokens start with "pat-" — assuming an OAuth access token.',
         );
       }
       return token;
     }
-    console.log("  The token cannot be empty.");
+    console.log("  The service key cannot be empty.");
   }
-  throw new Error("No token provided after 3 attempts — aborting setup.");
+  throw new Error("No service key provided after 3 attempts — aborting setup.");
 }
 
-async function askClients(prompter: Prompter): Promise<ClientId[]> {
+async function askClientsPiped(prompter: Prompter): Promise<ClientId[]> {
   console.log(`
 Step 2/3 · Choose which AI agents to configure
   1) Claude Desktop
@@ -121,41 +206,32 @@ Step 2/3 · Choose which AI agents to configure
   return [...ALL_CLIENTS];
 }
 
-export async function runSetup(flags: SetupFlags): Promise<void> {
-  const prompter = process.stdin.isTTY ? createTtyPrompter() : await createPipePrompter();
-  try {
-    console.log(TOKEN_GUIDE);
-    const token = await askToken(prompter);
-    const senderActorId =
-      (
-        await prompter.ask(
-          "Default sender actor ID for replies, e.g. A-12345 [Enter to skip]: ",
-        )
-      ).trim() || undefined;
+async function runPipedSetup(flags: SetupFlags): Promise<void> {
+  const prompter = await createPipePrompter();
+  console.log(PIPE_GUIDE);
+  const token = await askTokenPiped(prompter);
+  const senderActorId =
+    (await prompter.ask("Default sender actor ID for replies, e.g. A-12345 [Enter to skip]: ")).trim() ||
+    undefined;
+  const clients = await askClientsPiped(prompter);
 
-    const clients = await askClients(prompter);
+  console.log(`\nStep 3/3 · Installing for: ${clients.join(", ")}\n`);
+  const options = buildInstallOptions(flags, token, senderActorId, clients);
+  runInstall(options);
 
-    console.log(`\nStep 3/3 · Installing for: ${clients.join(", ")}\n`);
-    const options: InstallOptions = {
-      clients,
-      token,
-      senderActorId,
-      // Setup registers Claude Code across all projects unless overridden.
-      scope: flags.scope ?? "user",
-      configPath: flags.configPath,
-      hermesConfigPath: flags.hermesConfigPath,
-      dryRun: flags.dryRun,
-    };
-    runInstall(options);
-
-    console.log(`
+  console.log(`
 Done. The "${MCP_SERVER_KEY}" MCP server is configured.
-  • Claude Desktop: restart the app to load the server
-  • Claude Code:    available in new sessions (scope: ${options.scope})
-  • Hermes:         run \`hermes mcp test ${MCP_SERVER_KEY}\` or /reload-mcp in a session
+${nextSteps(clients, options.scope)}
 
-The server runs via: npx -y hubspot-conversations-mcp`);
-  } finally {
-    prompter.close();
+The server runs via: npx -y ${PACKAGE_NAME}`);
+}
+
+// -----------------------------------------------------------------------------
+
+export async function runSetup(flags: SetupFlags): Promise<void> {
+  if (process.stdin.isTTY) {
+    await runInteractiveSetup(flags);
+  } else {
+    await runPipedSetup(flags);
   }
 }

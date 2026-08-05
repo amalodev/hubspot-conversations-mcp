@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/amalodev/hubspot-conversations-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/amalodev/hubspot-conversations-mcp/actions/workflows/ci.yml)
 
-MCP server for the [HubSpot Conversations API](https://developers.hubspot.com/docs/api/conversations/conversations) with **1:1 tool parity with the [Arcade.dev HubSpot Conversations API toolkit](https://docs.arcade.dev/en/resources/integrations/sales/hubspot-conversations-api)** (24 tools). Read conversation threads and messages, send replies, manage threads and channel accounts, and integrate custom channels — from any MCP client (Claude Code, Claude Desktop, etc.).
+MCP server for the [HubSpot Conversations API](https://developers.hubspot.com/docs/api/conversations/conversations) — 24 tools to read conversation threads and messages, send replies, manage threads and channel accounts, and integrate custom channels, from any MCP client (Claude Code, Claude Desktop, etc.).
 
 Covers two HubSpot API surfaces:
 
@@ -23,7 +23,7 @@ The wizard walks you through everything:
 
 1. **Token guide** — step-by-step instructions for creating a [HubSpot service key](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys) (**Development → Keys → Service Keys**) with the right scopes: `conversations.read`, `conversations.write`, and optionally `conversations.custom_channels.read`/`.write` for the custom-channel tools.
 2. **Token prompt** — paste the `pat-...` service key (input is masked; legacy private app tokens and OAuth2 access tokens also work), plus an optional default sender actor ID for replies.
-3. **Agent selection** — choose which AI agents to configure: **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)).
+3. **Agent selection** — pick which AI agents to configure with an arrow-key multiselect (↑/↓ to move, space to toggle): **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)).
 4. **Automatic install** — each selected agent is configured immediately.
 
 The wizard also works scripted: pipe the answers via stdin (`printf 'pat-...\n\n1,3\n' | npx -y hubspot-conversations-mcp setup`).
@@ -102,7 +102,7 @@ npm publish
 | `HUBSPOT_CUSTOM_CHANNELS_API_VERSION` | | Default `2026-03` |
 | `HUBSPOT_AUTH_MODE` | | `bearer` (default — works for service keys, legacy tokens and OAuth2) or `private-app` for the legacy header |
 
-## Tools (Arcade parity)
+## Tools
 
 **Threads**
 
@@ -152,7 +152,7 @@ npm publish
 - `recipients` — the senders of the latest **incoming** message (i.e. a normal reply)
 - `sender_actor_id` — falls back to `HUBSPOT_DEFAULT_SENDER_ACTOR_ID`
 
-Pass any of them explicitly to override. Arcade-style calls are also supported: pass a stringified JSON `request_body` (typed fields win on conflict), and call with `mode="get_request_schema"` to inspect the raw body schema. The same pattern applies to `PublishCustomChannelMessage`.
+Pass any of them explicitly to override. The full request body can also be supplied as a stringified JSON `request_body` (typed fields win on conflict), and calling with `mode="get_request_schema"` returns the raw body schema. The same pattern applies to `PublishCustomChannelMessage`.
 
 ## Development
 
@@ -167,6 +167,5 @@ The integration tests run the full MCP server against a stubbed `fetch`, so no H
 
 ## Notes
 
-- Tool names and parameters mirror Arcade's `HubspotConversationsApi` toolkit 1:1; list tools additionally accept optional filter/pagination parameters (supersets of Arcade's schemas).
 - The client retries once on `429`/`502`/`503`, honoring `Retry-After` (capped at 10s).
-- Thread assignee endpoints (`PUT`/`DELETE /threads/{id}/assignee`) exist in the HubSpot API but are not part of Arcade's toolkit, so they are not exposed as tools. Re-add them in `src/tools/threads.ts` if needed.
+- Thread assignee endpoints (`PUT`/`DELETE /threads/{id}/assignee`) exist in the HubSpot API but are not currently exposed as tools. Add them in `src/tools/threads.ts` if needed.

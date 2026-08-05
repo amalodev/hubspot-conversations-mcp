@@ -32,7 +32,7 @@ export function errorText(error: unknown): string {
 }
 
 /**
- * Parse a stringified-JSON `request_body` argument (Arcade-style tool input).
+ * Parse a stringified-JSON `request_body` tool argument.
  * Returns {} when absent so typed arguments can be merged on top.
  */
 export function parseRequestBody(raw: string | undefined): Record<string, unknown> {

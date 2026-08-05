@@ -98,8 +98,8 @@ function resultText(result: Awaited<ReturnType<Client["callTool"]>>): string {
   return content.map((item) => item.text ?? "").join("\n");
 }
 
-describe("hubspot-conversations MCP server (Arcade tool parity)", () => {
-  it("registers exactly the 24 Arcade toolkit tools", async () => {
+describe("hubspot-conversations MCP server", () => {
+  it("registers exactly the 24 expected tools", async () => {
     const { mcpClient } = await setup(() => ({ json: {} }));
     const { tools } = await mcpClient.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_TOOLS);
@@ -245,7 +245,7 @@ describe("hubspot-conversations MCP server (Arcade tool parity)", () => {
     });
   });
 
-  it("accepts an Arcade-style stringified request_body (COMMENT needs no thread lookup)", async () => {
+  it("accepts a stringified request_body (COMMENT needs no thread lookup)", async () => {
     const { mcpClient, calls } = await setup((call) => {
       if (call.method === "POST") return { status: 201, json: { id: "c-1", type: "COMMENT" } };
       throw new Error(`Unexpected call: ${call.method} ${call.url.pathname}`);

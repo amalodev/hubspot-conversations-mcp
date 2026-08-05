@@ -22,6 +22,9 @@ export interface InstallOptions {
   /** Override the Hermes config.yaml location */
   hermesConfigPath?: string;
   dryRun: boolean;
+  /** Progress output; defaults to console.log (the setup wizard routes these through its UI) */
+  log?: (message: string) => void;
+  logError?: (message: string) => void;
 }
 
 export interface ServerEntry {
@@ -72,11 +75,11 @@ export function buildServerEntry(token: string, senderActorId?: string): ServerE
   return { command: "npx", args: ["-y", PACKAGE_NAME], env };
 }
 
-function backupIfExists(filePath: string): void {
+function backupIfExists(filePath: string, log: (message: string) => void): void {
   if (existsSync(filePath)) {
     const backupPath = `${filePath}.backup-${Date.now()}`;
     copyFileSync(filePath, backupPath);
-    console.log(`Backed up existing config to ${backupPath}`);
+    log(`Backed up existing config to ${backupPath}`);
   }
 }
 
@@ -115,6 +118,7 @@ export function mergeDesktopConfig(existing: unknown, entry: ServerEntry): Recor
 }
 
 export function installClaudeDesktop(options: InstallOptions): void {
+  const log = options.log ?? console.log;
   const configPath = options.configPath ?? defaultDesktopConfigPath();
   let existing: unknown;
   if (existsSync(configPath)) {
@@ -132,16 +136,15 @@ export function installClaudeDesktop(options: InstallOptions): void {
   const serialized = `${JSON.stringify(merged, null, 2)}\n`;
 
   if (options.dryRun) {
-    console.log(`[dry-run] Would write ${configPath}:`);
-    console.log(serialized);
+    log(`[dry-run] Would write ${configPath}:\n${serialized}`);
     return;
   }
 
   mkdirSync(path.dirname(configPath), { recursive: true });
-  backupIfExists(configPath);
+  backupIfExists(configPath, log);
   writeFileSync(configPath, serialized);
-  console.log(`✔ Claude Desktop: registered "${MCP_SERVER_KEY}" in ${configPath}`);
-  console.log("  Restart Claude Desktop to load the server.");
+  log(`✔ Claude Desktop: registered "${MCP_SERVER_KEY}" in ${configPath}`);
+  log("  Restart Claude Desktop to load the server.");
 }
 
 // --- Claude Code -------------------------------------------------------------
@@ -162,24 +165,25 @@ export function claudeCodeCommand(options: {
 }
 
 export function installClaudeCode(options: InstallOptions): void {
+  const log = options.log ?? console.log;
+  const logError = options.logError ?? console.error;
   const args = claudeCodeCommand(options);
   const printable = `claude ${args
     .map((arg) => (arg.includes(" ") || arg.includes("=") ? JSON.stringify(arg) : arg))
     .join(" ")}`;
 
   if (options.dryRun) {
-    console.log(`[dry-run] Would run: ${printable}`);
+    log(`[dry-run] Would run: ${printable}`);
     return;
   }
 
   const result = spawnSync("claude", args, { stdio: "inherit" });
   if (result.error || result.status !== 0) {
-    console.error("Could not run the claude CLI automatically. Run this yourself:");
-    console.error(`  ${printable}`);
+    logError(`Could not run the claude CLI automatically. Run this yourself:\n  ${printable}`);
     if (result.error) process.exitCode = 1;
     return;
   }
-  console.log(`✔ Claude Code: registered "${MCP_SERVER_KEY}" via the claude CLI`);
+  log(`✔ Claude Code: registered "${MCP_SERVER_KEY}" via the claude CLI`);
 }
 
 // --- Hermes (Nous Research hermes-agent) -------------------------------------
@@ -210,6 +214,7 @@ export function mergeHermesConfig(existing: unknown, entry: ServerEntry): Record
 }
 
 export function installHermes(options: InstallOptions): void {
+  const log = options.log ?? console.log;
   const configPath = options.hermesConfigPath ?? defaultHermesConfigPath();
   let existing: unknown;
   if (existsSync(configPath)) {
@@ -227,16 +232,15 @@ export function installHermes(options: InstallOptions): void {
   const serialized = stringifyYaml(merged);
 
   if (options.dryRun) {
-    console.log(`[dry-run] Would write ${configPath}:`);
-    console.log(serialized);
+    log(`[dry-run] Would write ${configPath}:\n${serialized}`);
     return;
   }
 
   mkdirSync(path.dirname(configPath), { recursive: true });
-  backupIfExists(configPath);
+  backupIfExists(configPath, log);
   writeFileSync(configPath, serialized);
-  console.log(`✔ Hermes: registered "${MCP_SERVER_KEY}" in ${configPath}`);
-  console.log(
+  log(`✔ Hermes: registered "${MCP_SERVER_KEY}" in ${configPath}`);
+  log(
     `  Note: rewriting the YAML drops any comments (a backup was made). ` +
       `Verify with \`hermes mcp test ${MCP_SERVER_KEY}\` or /reload-mcp in a running session.`,
   );
