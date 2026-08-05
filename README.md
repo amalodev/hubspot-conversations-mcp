@@ -79,19 +79,37 @@ Instead of sharing one service key across the team, each user can sign in with t
 
 The repo ships a **stateless OAuth broker** ([api/](api/)) — the only place the HubSpot app's client secret lives. It exchanges authorization codes and refreshes tokens, stores nothing, and sees no Conversations data: **all API traffic still goes directly from the user's machine to HubSpot**.
 
-### One-time org setup
+### One-time org setup (~10 minutes)
 
-1. **Create a HubSpot app** (in a [developer account](https://developers.hubspot.com)): a public app with `"distribution": "private"`, allowlist your portal, redirect URL `http://localhost:4573/callback`, and the scopes `conversations.read` + `conversations.write` (plus `conversations.custom_channels.*` if needed). Note the client ID and client secret.
-2. **Deploy the broker to Vercel**: create a Vercel project from this repo and set two environment variables on it: `HUBSPOT_OAUTH_CLIENT_ID` and `HUBSPOT_OAUTH_CLIENT_SECRET`. Continuous deploys run via [deploy-broker.yml](.github/workflows/deploy-broker.yml) — add the repo secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (from the Vercel project's settings), and every change to `api/**` on `main` deploys automatically (the workflow skips with a notice until the secrets exist).
-3. Share the broker URL (e.g. `https://your-broker.vercel.app`) with the team — it is not a secret, and neither is the client ID (the CLI fetches it from the broker's `/api/config`).
+1. **Create a HubSpot app** (in a [developer account](https://developers.hubspot.com), e.g. as a developer-projects app): use `"distribution": "private"` and allowlist your portal. The `auth` block of `app-hsmeta.json` should look like:
+
+   ```json
+   "auth": {
+     "type": "oauth",
+     "redirectUrls": ["http://localhost:4573/callback"],
+     "requiredScopes": ["oauth", "conversations.read", "conversations.write"],
+     "optionalScopes": [],
+     "conditionallyRequiredScopes": []
+   }
+   ```
+
+   Deploy the app and note the client ID and client secret from its Auth tab.
+
+2. **Deploy the broker to Vercel** — one click:
+
+   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Famalodev%2Fhubspot-conversations-mcp&env=HUBSPOT_OAUTH_CLIENT_ID,HUBSPOT_OAUTH_CLIENT_SECRET&envDescription=Client%20ID%20and%20secret%20from%20your%20HubSpot%20app%27s%20Auth%20tab&project-name=hubspot-conversations-broker&repository-name=hubspot-conversations-broker)
+
+   The button clones this repo and prompts for the two environment variables (`HUBSPOT_OAUTH_CLIENT_ID`, `HUBSPOT_OAUTH_CLIENT_SECRET`). Alternatively create the Vercel project manually from your fork, or wire up CI deploys via [deploy-broker.yml](.github/workflows/deploy-broker.yml) with the `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` repo secrets.
+
+3. **Share the broker URL** (e.g. `https://your-broker.vercel.app`) with the team — it is not a secret, and neither is the client ID (the CLI fetches it from the broker's `/api/config`). Setting `HUBSPOT_OAUTH_BROKER_URL` org-wide (dotfiles, MDM, onboarding docs) makes the login command flag-free.
 
 ### Per user
 
 ```bash
-npx -y hubspot-conversations-mcp login
+npx -y hubspot-conversations-mcp login --broker-url https://your-broker.vercel.app
 ```
 
-The default broker is `https://hubspot-conversations-mcp.vercel.app`. Its HubSpot app is private-distribution and allowlisted, so only approved portals can complete a login — other orgs deploy their own broker (step 2 above) and pass `--broker-url` / set `HUBSPOT_OAUTH_BROKER_URL`.
+(The flag can be omitted when `HUBSPOT_OAUTH_BROKER_URL` is set.) Because the HubSpot app is private-distribution and allowlisted, only your own org's portals can complete a login against your broker — each org runs its own broker with its own app, so tokens never cross organizational trust boundaries.
 
 The browser opens for the HubSpot consent screen; tokens are stored in `~/.hubspot-conversations-mcp/tokens.json` (0600) and auto-refreshed through the broker. Then register the server without any token:
 
@@ -132,7 +150,7 @@ npm publish
 | Environment variable | Required | Description |
 |---|---|---|
 | `HUBSPOT_ACCESS_TOKEN` | (✅) | Service key (`pat-...`), legacy private app token, or OAuth2 access token. Optional when a per-user OAuth login exists on the machine; takes precedence when both are present |
-| `HUBSPOT_OAUTH_BROKER_URL` | | Broker URL for the `login` command (default `https://hubspot-conversations-mcp.vercel.app`) |
+| `HUBSPOT_OAUTH_BROKER_URL` | | Your org's broker URL, used by `login` when `--broker-url` is not passed |
 | `HUBSPOT_TOKEN_STORE_PATH` | | OAuth token store location (default `~/.hubspot-conversations-mcp/tokens.json`) |
 | `HUBSPOT_DEFAULT_SENDER_ACTOR_ID` | | Default sender for `SendConversationMessage`, e.g. `A-12345` (agent actor = `A-<hubspot user id>`) |
 | `HUBSPOT_BASE_URL` | | Default `https://api.hubapi.com` |
