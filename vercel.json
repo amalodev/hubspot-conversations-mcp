@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "mkdir -p .vercel-static",
-  "outputDirectory": ".vercel-static"
+  "buildCommand": "echo 'No build step — static page in public/, functions in api/'"
 }

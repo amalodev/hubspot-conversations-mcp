@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hubspot-conversations-mcp — OAuth broker</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.6; color: #1a2b3c; }
+    code { background: #f0f2f5; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.95em; }
+    h1 { font-size: 1.4rem; }
+    table { border-collapse: collapse; }
+    td { padding: 0.25rem 1rem 0.25rem 0; vertical-align: top; }
+    a { color: #0b6e99; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #14181d; color: #d8dee6; }
+      code { background: #232a33; }
+      a { color: #6cb8dd; }
+    }
+  </style>
+</head>
+<body>
+  <h1>hubspot-conversations-mcp — OAuth broker</h1>
+  <p>
+    Stateless OAuth broker for the
+    <a href="https://github.com/amalodev/hubspot-conversations-mcp">hubspot-conversations-mcp</a>
+    MCP server. It exchanges and refreshes HubSpot OAuth tokens on behalf of the
+    CLI's <code>login</code> flow — it stores nothing and never sees Conversations data.
+  </p>
+  <table>
+    <tr><td><code>GET /api/config</code></td><td>App metadata (client ID)</td></tr>
+    <tr><td><code>POST /api/exchange</code></td><td>Authorization code → tokens (localhost redirects only)</td></tr>
+    <tr><td><code>POST /api/refresh</code></td><td>Refresh token → fresh access token</td></tr>
+  </table>
+  <p>Sign in from your terminal:</p>
+  <p><code>npx -y hubspot-conversations-mcp login --broker-url https://&lt;this-host&gt;</code></p>
+</body>
+</html>
