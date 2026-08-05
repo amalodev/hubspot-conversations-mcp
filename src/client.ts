@@ -1,4 +1,4 @@
-import type { AuthMode, HubSpotConfig } from "./config.js";
+import type { HubSpotConfig } from "./config.js";
 
 export class HubSpotApiError extends Error {
   constructor(
@@ -14,27 +14,13 @@ export class HubSpotApiError extends Error {
 }
 
 /**
- * Supplies auth headers for API requests. Static providers wrap a fixed
- * service key; the OAuth provider refreshes tokens via the org's broker.
+ * Supplies auth headers for API requests — backed by the per-user OAuth token
+ * store, refreshed via the org's broker.
  */
 export interface TokenProvider {
   getAuthHeaders(): Promise<Record<string, string>>;
   /** Called after a 401; returns true when the request should be retried. */
   refreshAfterUnauthorized?(): Promise<boolean>;
-}
-
-export class StaticTokenProvider implements TokenProvider {
-  constructor(
-    private readonly accessToken: string,
-    private readonly authMode: AuthMode,
-  ) {}
-
-  async getAuthHeaders(): Promise<Record<string, string>> {
-    if (this.authMode === "private-app") {
-      return { "private-app": this.accessToken };
-    }
-    return { authorization: `Bearer ${this.accessToken}` };
-  }
 }
 
 export type QueryParams = Record<
@@ -80,15 +66,10 @@ export class HubSpotClient {
     private readonly fetchImpl: typeof fetch = globalThis.fetch,
     provider?: TokenProvider,
   ) {
-    if (provider) {
-      this.provider = provider;
-    } else if (config.accessToken) {
-      this.provider = new StaticTokenProvider(config.accessToken, config.authMode);
-    } else {
-      throw new Error(
-        "No HubSpot credentials: set HUBSPOT_ACCESS_TOKEN or run `hubspot-conversations-mcp login`.",
-      );
+    if (!provider) {
+      throw new Error("No credentials: run `hubspot-conversations-mcp login` first.");
     }
+    this.provider = provider;
   }
 
   private rootPrefix(root: ApiRoot): string {

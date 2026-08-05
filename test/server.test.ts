@@ -44,12 +44,15 @@ function createStubFetch(handler: (call: RecordedCall) => StubResponse) {
 }
 
 const TEST_CONFIG: HubSpotConfig = {
-  accessToken: "pat-eu1-test-token",
   baseUrl: "https://api.hubapi.com",
   apiVersion: "2026-09-beta",
   customChannelsApiVersion: "2026-03",
-  authMode: "private-app",
   defaultSenderActorId: "A-100",
+};
+
+/** Stand-in for the OAuth provider — supplies a fixed bearer token. */
+const TEST_PROVIDER = {
+  getAuthHeaders: async () => ({ authorization: "Bearer test-oauth-token" }),
 };
 
 const EXPECTED_TOOLS = [
@@ -85,7 +88,7 @@ async function setup(
 ) {
   const { impl, calls } = createStubFetch(handler);
   const config = { ...TEST_CONFIG, ...configOverrides };
-  const hubspot = new HubSpotClient(config, impl);
+  const hubspot = new HubSpotClient(config, impl, TEST_PROVIDER);
   const server = createServer(hubspot, config);
   const mcpClient = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -105,7 +108,7 @@ describe("hubspot-conversations MCP server", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_TOOLS);
   });
 
-  it("retrieves threads with filters, repeated params and private-app auth header", async () => {
+  it("retrieves threads with filters, repeated params and the provider's auth header", async () => {
     const { mcpClient, calls } = await setup(() => ({
       json: { results: [{ id: "42", status: "OPEN" }], paging: { next: { after: "cur" } } },
     }));
@@ -128,20 +131,9 @@ describe("hubspot-conversations MCP server", () => {
     expect(call.url.searchParams.get("threadStatus")).toBe("OPEN");
     expect(call.url.searchParams.get("association")).toBe("TICKET");
     expect(call.url.searchParams.get("limit")).toBe("50");
-    expect(call.headers["private-app"]).toBe("pat-eu1-test-token");
-    expect(call.headers["authorization"]).toBeUndefined();
+    expect(call.headers["authorization"]).toBe("Bearer test-oauth-token");
     expect(resultText(result)).toContain('"id": "42"');
     expect(resultText(result)).toContain('"after": "cur"');
-  });
-
-  it("uses bearer auth when configured", async () => {
-    const { mcpClient, calls } = await setup(() => ({ json: { results: [] } }), {
-      accessToken: "oauth-abc",
-      authMode: "bearer",
-    });
-    await mcpClient.callTool({ name: "ListConversationInboxes", arguments: {} });
-    expect(calls[0].headers["authorization"]).toBe("Bearer oauth-abc");
-    expect(calls[0].headers["private-app"]).toBeUndefined();
   });
 
   it("sends a reply deriving channel, account and recipients from the thread", async () => {

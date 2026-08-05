@@ -206,7 +206,6 @@ describe("HubSpotClient 401 retry", () => {
     baseUrl: "https://api.hubapi.com",
     apiVersion: "2026-09-beta",
     customChannelsApiVersion: "2026-03",
-    authMode: "bearer",
   };
 
   it("force-refreshes once on 401 and retries with the new token", async () => {
@@ -232,7 +231,7 @@ describe("HubSpotClient 401 retry", () => {
     expect(seenAuth).toEqual(["Bearer old", "Bearer new"]);
   });
 
-  it("rejects construction without any credentials", () => {
-    expect(() => new HubSpotClient(config)).toThrow(/HUBSPOT_ACCESS_TOKEN|login/);
+  it("rejects construction without a token provider", () => {
+    expect(() => new HubSpotClient(config)).toThrow(/login/);
   });
 });

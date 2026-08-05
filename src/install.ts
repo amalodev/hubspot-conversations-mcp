@@ -13,9 +13,6 @@ export const ALL_CLIENTS: ClientId[] = ["claude-desktop", "claude-code", "hermes
 
 export interface InstallOptions {
   clients: ClientId[];
-  /** Service key. When omitted, entries are written without credentials and the
-   * server falls back to the per-user OAuth token store on each machine. */
-  token?: string;
   senderActorId?: string;
   /** claude mcp add scope: local, user, or project */
   scope?: string;
@@ -71,9 +68,9 @@ export function parseClientSelection(raw: string): ClientId[] {
   return selected;
 }
 
-export function buildServerEntry(token?: string, senderActorId?: string): ServerEntry {
+/** Entries carry no credentials — the server reads the per-user OAuth token store. */
+export function buildServerEntry(senderActorId?: string): ServerEntry {
   const env: Record<string, string> = {};
-  if (token) env.HUBSPOT_ACCESS_TOKEN = token;
   if (senderActorId) env.HUBSPOT_DEFAULT_SENDER_ACTOR_ID = senderActorId;
   return { command: "npx", args: ["-y", PACKAGE_NAME], env };
 }
@@ -135,7 +132,7 @@ export function installClaudeDesktop(options: InstallOptions): void {
       );
     }
   }
-  const merged = mergeDesktopConfig(existing, buildServerEntry(options.token, options.senderActorId));
+  const merged = mergeDesktopConfig(existing, buildServerEntry(options.senderActorId));
   const serialized = `${JSON.stringify(merged, null, 2)}\n`;
 
   if (options.dryRun) {
@@ -153,14 +150,12 @@ export function installClaudeDesktop(options: InstallOptions): void {
 // --- Claude Code -------------------------------------------------------------
 
 export function claudeCodeCommand(options: {
-  token?: string;
   senderActorId?: string;
   scope?: string;
 }): string[] {
   const args = ["mcp", "add"];
   if (options.scope) args.push("-s", options.scope);
   args.push(MCP_SERVER_KEY);
-  if (options.token) args.push("--env", `HUBSPOT_ACCESS_TOKEN=${options.token}`);
   if (options.senderActorId) {
     args.push("--env", `HUBSPOT_DEFAULT_SENDER_ACTOR_ID=${options.senderActorId}`);
   }
@@ -232,7 +227,7 @@ export function installHermes(options: InstallOptions): void {
       );
     }
   }
-  const merged = mergeHermesConfig(existing, buildServerEntry(options.token, options.senderActorId));
+  const merged = mergeHermesConfig(existing, buildServerEntry(options.senderActorId));
   const serialized = stringifyYaml(merged);
 
   if (options.dryRun) {

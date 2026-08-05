@@ -5,8 +5,7 @@ import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
 import { OAuthTokenProvider } from "./auth.js";
-import { StaticTokenProvider, type TokenProvider } from "./client.js";
-import type { HubSpotConfig } from "./config.js";
+import type { TokenProvider } from "./client.js";
 
 export const DEFAULT_CALLBACK_PORT = 4573;
 export const DEFAULT_SCOPES = ["conversations.read", "conversations.write"];
@@ -280,24 +279,17 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   }
 }
 
-/**
- * Pick the credential source for the running server:
- * HUBSPOT_ACCESS_TOKEN wins (service key / CI); otherwise the OAuth token store.
- */
+/** Resolve the per-user OAuth credentials for the running server. */
 export function resolveTokenProvider(
-  config: HubSpotConfig,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
 ): TokenProvider {
-  if (config.accessToken) {
-    return new StaticTokenProvider(config.accessToken, config.authMode);
-  }
   const store = readTokenStore(env);
   if (store) {
     return new OAuthTokenProvider(store, fetchImpl, env);
   }
   throw new Error(
-    "No HubSpot credentials found. Either set HUBSPOT_ACCESS_TOKEN (service key) or run " +
-      "`npx hubspot-conversations-mcp login --broker-url <your broker>` for per-user OAuth.",
+    "Not signed in to HubSpot. Run `npx hubspot-conversations-mcp login` " +
+      "(or `setup`) on this machine first.",
   );
 }

@@ -34,31 +34,23 @@ describe("parseClientSelection", () => {
 });
 
 describe("buildServerEntry", () => {
-  it("uses npx -y with the package name", () => {
-    expect(buildServerEntry("pat-1")).toEqual({
+  it("uses npx -y with the package name and never embeds credentials", () => {
+    expect(buildServerEntry()).toEqual({
       command: "npx",
       args: ["-y", "hubspot-conversations-mcp"],
-      env: { HUBSPOT_ACCESS_TOKEN: "pat-1" },
+      env: {},
     });
   });
 
   it("includes the sender actor when provided", () => {
-    expect(buildServerEntry("pat-1", "A-42").env).toEqual({
-      HUBSPOT_ACCESS_TOKEN: "pat-1",
+    expect(buildServerEntry("A-42").env).toEqual({
       HUBSPOT_DEFAULT_SENDER_ACTOR_ID: "A-42",
     });
-  });
-
-  it("omits the token env in OAuth mode (server uses the local token store)", () => {
-    expect(buildServerEntry(undefined, "A-42").env).toEqual({
-      HUBSPOT_DEFAULT_SENDER_ACTOR_ID: "A-42",
-    });
-    expect(buildServerEntry().env).toEqual({});
   });
 });
 
 describe("mergeDesktopConfig", () => {
-  const entry = buildServerEntry("pat-1");
+  const entry = buildServerEntry("A-42");
 
   it("creates the structure from scratch", () => {
     expect(mergeDesktopConfig(undefined, entry)).toEqual({
@@ -98,7 +90,7 @@ describe("mergeDesktopConfig", () => {
 });
 
 describe("mergeHermesConfig", () => {
-  const entry = buildServerEntry("pat-1", "A-42");
+  const entry = buildServerEntry("A-42");
 
   it("creates the mcp_servers map from scratch with enabled: true", () => {
     expect(mergeHermesConfig(undefined, entry)).toEqual({
@@ -139,31 +131,8 @@ describe("default config paths", () => {
 });
 
 describe("claudeCodeCommand", () => {
-  it("builds the claude mcp add invocation with npx", () => {
-    expect(claudeCodeCommand({ token: "pat-1" })).toEqual([
-      "mcp",
-      "add",
-      "hubspot-conversations",
-      "--env",
-      "HUBSPOT_ACCESS_TOKEN=pat-1",
-      "--",
-      "npx",
-      "-y",
-      "hubspot-conversations-mcp",
-    ]);
-  });
-
-  it("includes scope and sender actor when provided", () => {
-    const args = claudeCodeCommand({ token: "pat-1", senderActorId: "A-42", scope: "user" });
-    expect(args).toContain("-s");
-    expect(args).toContain("user");
-    expect(args).toContain("HUBSPOT_DEFAULT_SENDER_ACTOR_ID=A-42");
-  });
-
-  it("omits the token env flag in OAuth mode", () => {
-    const args = claudeCodeCommand({ scope: "user" });
-    expect(args.join(" ")).not.toContain("HUBSPOT_ACCESS_TOKEN");
-    expect(args).toEqual([
+  it("builds a credential-free claude mcp add invocation", () => {
+    expect(claudeCodeCommand({ scope: "user" })).toEqual([
       "mcp",
       "add",
       "-s",
@@ -174,5 +143,11 @@ describe("claudeCodeCommand", () => {
       "-y",
       "hubspot-conversations-mcp",
     ]);
+  });
+
+  it("includes the sender actor when provided", () => {
+    const args = claudeCodeCommand({ senderActorId: "A-42" });
+    expect(args).toContain("HUBSPOT_DEFAULT_SENDER_ACTOR_ID=A-42");
+    expect(args.join(" ")).not.toContain("HUBSPOT_ACCESS_TOKEN");
   });
 });

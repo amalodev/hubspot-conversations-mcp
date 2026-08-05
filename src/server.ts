@@ -7,7 +7,7 @@ import { registerMessageTools } from "./tools/messages.js";
 import { registerThreadTools } from "./tools/threads.js";
 
 export const SERVER_NAME = "hubspot-conversations";
-export const SERVER_VERSION = "0.9.0";
+export const SERVER_VERSION = "0.10.0";
 
 export function createServer(client: HubSpotClient, config: HubSpotConfig): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });

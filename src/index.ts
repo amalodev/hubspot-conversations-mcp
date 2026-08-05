@@ -19,27 +19,18 @@ import { runSetup } from "./setup.js";
 
 const HELP = `${PACKAGE_NAME} v${SERVER_VERSION}
 
+Authentication is per-user OAuth via your org's broker — see the README's
+"Per-user OAuth" section for the one-time org setup (HubSpot app + broker).
+
 Usage:
   ${PACKAGE_NAME}                  Run the MCP server on stdio (what MCP clients invoke)
-  ${PACKAGE_NAME} setup            Interactive setup: auth + choose agents + install
-  ${PACKAGE_NAME} install          Non-interactive install (flags below)
-  ${PACKAGE_NAME} login            Per-user OAuth sign-in via your org's auth broker
+  ${PACKAGE_NAME} setup            Interactive setup: broker → sign in → choose agents
+  ${PACKAGE_NAME} login            Sign in to HubSpot via your org's broker
   ${PACKAGE_NAME} logout           Remove the locally stored OAuth tokens
-  ${PACKAGE_NAME} whoami           Show which credentials the server would use
+  ${PACKAGE_NAME} whoami           Show the active sign-in
+  ${PACKAGE_NAME} install          Non-interactive agent registration (flags below)
   ${PACKAGE_NAME} --help           Show this help
   ${PACKAGE_NAME} --version        Print the version
-
-Install options:
-  --client <selection>         claude-desktop, claude-code, hermes, both, or all
-                               (comma-separated combinations allowed)
-  --token <pat-...>            HubSpot service key (or set HUBSPOT_ACCESS_TOKEN)
-  --oauth                      Install without a token — the server uses the local
-                               OAuth token store (run \`login\` first on each machine)
-  --sender-actor-id <A-123>    Optional default sender for SendConversationMessage
-  --scope <local|user|project> Claude Code registration scope (default: local; setup: user)
-  --config-path <path>         Override the claude_desktop_config.json location
-  --hermes-config-path <path>  Override the Hermes config.yaml location (~/.hermes/config.yaml)
-  --dry-run                    Print what would happen without changing anything
 
 Login options:
   --broker-url <url>           Your org's OAuth broker (or set HUBSPOT_OAUTH_BROKER_URL)
@@ -49,17 +40,24 @@ Login options:
                                the redirect URL registered on the HubSpot app)
   --no-open                    Print the authorize URL without opening a browser
 
+Install options:
+  --client <selection>         claude-desktop, claude-code, hermes, both, or all
+                               (comma-separated combinations allowed)
+  --sender-actor-id <A-123>    Optional default sender for SendConversationMessage
+  --scope <local|user|project> Claude Code registration scope (default: local; setup: user)
+  --config-path <path>         Override the claude_desktop_config.json location
+  --hermes-config-path <path>  Override the Hermes config.yaml location (~/.hermes/config.yaml)
+  --dry-run                    Print what would happen without changing anything
+
 Examples:
   npx ${PACKAGE_NAME} setup
   npx ${PACKAGE_NAME} login --broker-url https://your-broker.vercel.app
-  npx ${PACKAGE_NAME} install --client all --oauth
-  npx ${PACKAGE_NAME} install --client all --token pat-eu1-... --sender-actor-id A-12345
+  npx ${PACKAGE_NAME} install --client all
 
-Environment (server mode):
-  HUBSPOT_ACCESS_TOKEN               service key — takes precedence over OAuth tokens
-  HUBSPOT_DEFAULT_SENDER_ACTOR_ID    optional
-  HUBSPOT_OAUTH_BROKER_URL           default broker for \`login\`
+Environment:
+  HUBSPOT_OAUTH_BROKER_URL           default broker for \`login\` and \`setup\`
   HUBSPOT_TOKEN_STORE_PATH           OAuth token store (default ~/.hubspot-conversations-mcp/tokens.json)
+  HUBSPOT_DEFAULT_SENDER_ACTOR_ID    optional default sender
   HUBSPOT_BASE_URL                   optional (default https://api.hubapi.com)
   HUBSPOT_CONVERSATIONS_API_VERSION  optional (default 2026-09-beta)
   HUBSPOT_CUSTOM_CHANNELS_API_VERSION optional (default 2026-03)
@@ -70,8 +68,6 @@ function runInstallCli(argv: string[]): void {
     args: argv,
     options: {
       client: { type: "string" },
-      token: { type: "string" },
-      oauth: { type: "boolean", default: false },
       "sender-actor-id": { type: "string" },
       scope: { type: "string" },
       "config-path": { type: "string" },
@@ -90,23 +86,15 @@ function runInstallCli(argv: string[]): void {
   if (values.scope && !["local", "user", "project"].includes(values.scope)) {
     throw new Error("--scope must be local, user, or project.");
   }
-  const token = values.token ?? process.env.HUBSPOT_ACCESS_TOKEN?.trim();
-  if (!token && !values.oauth) {
-    throw new Error(
-      "Provide credentials: --token / HUBSPOT_ACCESS_TOKEN (service key), or --oauth to use " +
-        "the per-user OAuth token store (run `login` first). Or run `setup` for the wizard.",
-    );
-  }
-  if (values.oauth && !readTokenStore()) {
-    throw new Error(
-      `--oauth requires a completed login on this machine (no token store at ${tokenStorePath()}). ` +
-        "Run `npx hubspot-conversations-mcp login --broker-url <url>` first.",
+  if (!readTokenStore()) {
+    console.log(
+      "Note: no HubSpot sign-in on this machine yet — run " +
+        `\`npx ${PACKAGE_NAME} login\` before using the server.`,
     );
   }
 
   const options: InstallOptions = {
     clients,
-    token: values.oauth ? undefined : token,
     senderActorId: values["sender-actor-id"],
     scope: values.scope,
     configPath: values["config-path"],
@@ -169,20 +157,14 @@ async function runLoginCli(argv: string[]): Promise<void> {
 }
 
 async function runWhoamiCli(): Promise<void> {
-  const envToken = process.env.HUBSPOT_ACCESS_TOKEN?.trim();
-  if (envToken) {
-    console.log(`Mode: static token (HUBSPOT_ACCESS_TOKEN, ${envToken.slice(0, 8)}…)`);
-    console.log("This takes precedence over any OAuth token store.");
-    return;
-  }
   const store = readTokenStore();
   if (!store) {
-    console.log("Not signed in: no HUBSPOT_ACCESS_TOKEN and no OAuth token store.");
-    console.log(`Run \`npx ${PACKAGE_NAME} login --broker-url <url>\` or set HUBSPOT_ACCESS_TOKEN.`);
+    console.log("Not signed in — no OAuth token store on this machine.");
+    console.log(`Run \`npx ${PACKAGE_NAME} login\` or \`npx ${PACKAGE_NAME} setup\`.`);
     process.exitCode = 1;
     return;
   }
-  console.log(`Mode: per-user OAuth (store: ${tokenStorePath()})`);
+  console.log(`Signed in via per-user OAuth (store: ${tokenStorePath()})`);
   console.log(`Broker: ${store.brokerUrl}`);
   if (store.user) console.log(`User: ${store.user}`);
   if (store.hubId) console.log(`Portal: ${store.hubId}`);
@@ -199,14 +181,13 @@ async function runWhoamiCli(): Promise<void> {
 
 async function runServer(): Promise<void> {
   const config = loadConfig();
-  const provider = resolveTokenProvider(config);
+  const provider = resolveTokenProvider();
   const client = new HubSpotClient(config, globalThis.fetch, provider);
   const server = createServer(client, config);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout carries the MCP protocol — log to stderr only.
-  const mode = config.accessToken ? `static (${config.authMode})` : "oauth";
-  console.error(`${SERVER_NAME} v${SERVER_VERSION} running on stdio (auth: ${mode})`);
+  console.error(`${SERVER_NAME} v${SERVER_VERSION} running on stdio (per-user OAuth)`);
 }
 
 async function main(): Promise<void> {

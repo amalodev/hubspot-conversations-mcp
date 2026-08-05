@@ -28,4 +28,4 @@ jobs:
           node dist/index.js --version
           node dist/index.js --help > /dev/null
       - name: Installer smoke test (dry-run)
-        run: node dist/index.js install --client all --token pat-ci-smoke --dry-run
+        run: node dist/index.js install --client all --dry-run

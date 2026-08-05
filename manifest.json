@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "hubspot-conversations-mcp",
   "display_name": "HubSpot Conversations",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Read and send HubSpot Conversations messages: threads, replies, inboxes, channels, actors and custom channels.",
   "long_description": "MCP server for the HubSpot Conversations API (24 tools). Retrieve and filter conversation threads, read message history, send replies and internal comments, manage thread status, and integrate custom channels (publish external messages, delivery status, channel accounts).",
   "author": {
@@ -18,23 +18,15 @@
       "command": "node",
       "args": ["${__dirname}/dist/index.js"],
       "env": {
-        "HUBSPOT_ACCESS_TOKEN": "${user_config.hubspot_access_token}",
         "HUBSPOT_DEFAULT_SENDER_ACTOR_ID": "${user_config.default_sender_actor_id}"
       }
     }
   },
   "user_config": {
-    "hubspot_access_token": {
-      "type": "string",
-      "title": "HubSpot service key",
-      "description": "Service key (pat-..., created under Development → Keys → Service Keys) with the conversations.read and conversations.write scopes (plus conversations.custom_channels.* for custom channel tools). Legacy private app tokens also work.",
-      "sensitive": true,
-      "required": true
-    },
     "default_sender_actor_id": {
       "type": "string",
       "title": "Default sender actor ID",
-      "description": "Optional. Used as sender for SendConversationMessage when not passed explicitly, e.g. A-12345 (A-<your HubSpot user id>).",
+      "description": "Optional. Used as sender for SendConversationMessage when not passed explicitly, e.g. A-12345 (A-<your HubSpot user id>). Authentication is per-user OAuth: run `npx -y hubspot-conversations-mcp login` once before using the extension.",
       "required": false
     }
   },
