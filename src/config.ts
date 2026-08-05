@@ -13,8 +13,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubSpotConfig 
   const accessToken = env.HUBSPOT_ACCESS_TOKEN?.trim();
   if (!accessToken) {
     throw new Error(
-      "HUBSPOT_ACCESS_TOKEN is not set. Create a HubSpot private app with the " +
-        "conversations.read and conversations.write scopes and set its access token.",
+      "HUBSPOT_ACCESS_TOKEN is not set. Create a HubSpot service key (Development → Keys → " +
+        "Service Keys) with the conversations.read and conversations.write scopes and set it here. " +
+        "Legacy private app tokens and OAuth2 access tokens also work.",
     );
   }
 
@@ -25,8 +26,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubSpotConfig 
   } else if (rawAuthMode) {
     throw new Error(`HUBSPOT_AUTH_MODE must be "bearer" or "private-app", got "${rawAuthMode}".`);
   } else {
-    // Private app tokens are prefixed with "pat-"; anything else is assumed to be OAuth2.
-    authMode = accessToken.startsWith("pat-") ? "private-app" : "bearer";
+    // Bearer works for service keys, legacy private app tokens and OAuth2 alike;
+    // the legacy `private-app` header is opt-in via HUBSPOT_AUTH_MODE.
+    authMode = "bearer";
   }
 
   return {

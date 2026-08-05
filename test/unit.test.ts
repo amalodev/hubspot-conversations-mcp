@@ -25,21 +25,23 @@ describe("loadConfig", () => {
     expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/HUBSPOT_ACCESS_TOKEN/);
   });
 
-  it("auto-detects private-app mode from pat- prefix", () => {
+  it("defaults to bearer auth — works for service keys, legacy tokens and OAuth alike", () => {
     const config = loadConfig({ HUBSPOT_ACCESS_TOKEN: "pat-eu1-abc" } as NodeJS.ProcessEnv);
-    expect(config.authMode).toBe("private-app");
+    expect(config.authMode).toBe("bearer");
     expect(config.baseUrl).toBe("https://api.hubapi.com");
     expect(config.apiVersion).toBe("2026-09-beta");
+    expect(config.customChannelsApiVersion).toBe("2026-03");
   });
 
-  it("defaults to bearer for non-pat tokens and honors overrides", () => {
+  it("honors overrides including the legacy private-app header mode", () => {
     const config = loadConfig({
-      HUBSPOT_ACCESS_TOKEN: "oauth-token",
+      HUBSPOT_ACCESS_TOKEN: "pat-eu1-abc",
+      HUBSPOT_AUTH_MODE: "private-app",
       HUBSPOT_BASE_URL: "https://example.test/",
       HUBSPOT_CONVERSATIONS_API_VERSION: "v3",
       HUBSPOT_DEFAULT_SENDER_ACTOR_ID: "A-42",
     } as NodeJS.ProcessEnv);
-    expect(config.authMode).toBe("bearer");
+    expect(config.authMode).toBe("private-app");
     expect(config.baseUrl).toBe("https://example.test");
     expect(config.apiVersion).toBe("v3");
     expect(config.defaultSenderActorId).toBe("A-42");

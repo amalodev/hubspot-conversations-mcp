@@ -68,8 +68,8 @@ function runInstallCli(argv: string[]): void {
   if (!token) {
     throw new Error(
       "A HubSpot access token is required: pass --token or set HUBSPOT_ACCESS_TOKEN. " +
-        "Create one under Settings → Integrations → Private Apps with the conversations.read " +
-        "and conversations.write scopes — or run `setup` for the interactive wizard.",
+        "Create a service key under Development → Keys → Service Keys with the " +
+        "conversations.read and conversations.write scopes — or run `setup` for the interactive wizard.",
     );
   }
 

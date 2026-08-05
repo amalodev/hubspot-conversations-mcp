@@ -1,6 +1,6 @@
 {
   "name": "hubspot-conversations-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MCP server for the HubSpot Conversations API — read threads and messages, send replies and comments, and manage conversation threads from any MCP client. 1:1 tool parity with the Arcade.dev HubSpot Conversations toolkit.",
   "type": "module",
   "bin": {

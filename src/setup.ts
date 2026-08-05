@@ -19,16 +19,17 @@ const TOKEN_GUIDE = `
 HubSpot Conversations MCP — setup
 =================================
 
-Step 1/3 · Create a HubSpot access token
-  1. Open https://app.hubspot.com and go to: Settings (gear icon) → Integrations → Private Apps
-  2. Click "Create private app" (or open an existing one)
-  3. On the "Scopes" tab, add:
+Step 1/3 · Create a HubSpot service key
+  1. Open https://app.hubspot.com and go to: Development → Keys → Service Keys
+  2. Click "Create service key" and give it a name (e.g. "hubspot-conversations-mcp")
+  3. Add the scopes:
        • conversations.read
        • conversations.write
        • conversations.custom_channels.read / .write  (only if you'll use custom channels)
-  4. Click "Create app" and copy the access token (starts with "pat-")
+  4. Click "Create", open the key and click "Show" — copy the key (starts with "pat-")
 
-  Docs: https://developers.hubspot.com/docs/apps/private-apps/overview
+  Legacy private app tokens and OAuth2 access tokens with the same scopes also work.
+  Docs: https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys
 `;
 
 interface Prompter {
@@ -87,10 +88,12 @@ async function createPipePrompter(): Promise<Prompter> {
 
 async function askToken(prompter: Prompter): Promise<string> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const token = (await prompter.askHidden("Paste your HubSpot access token: ")).trim();
+    const token = (await prompter.askHidden("Paste your HubSpot service key: ")).trim();
     if (token) {
       if (!token.startsWith("pat-")) {
-        console.log("  Note: token does not start with \"pat-\" — assuming an OAuth access token.");
+        console.log(
+          "  Note: service keys and legacy tokens start with \"pat-\" — assuming an OAuth access token.",
+        );
       }
       return token;
     }

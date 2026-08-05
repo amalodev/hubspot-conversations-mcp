@@ -21,8 +21,8 @@ npx -y hubspot-conversations-mcp setup
 
 The wizard walks you through everything:
 
-1. **Token guide** — step-by-step instructions for creating a HubSpot private app (Settings → Integrations → Private Apps) with the right scopes: `conversations.read`, `conversations.write`, and optionally `conversations.custom_channels.read`/`.write` for the custom-channel tools.
-2. **Token prompt** — paste the `pat-...` token (input is masked; OAuth2 access tokens also work), plus an optional default sender actor ID for replies.
+1. **Token guide** — step-by-step instructions for creating a [HubSpot service key](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys) (**Development → Keys → Service Keys**) with the right scopes: `conversations.read`, `conversations.write`, and optionally `conversations.custom_channels.read`/`.write` for the custom-channel tools.
+2. **Token prompt** — paste the `pat-...` service key (input is masked; legacy private app tokens and OAuth2 access tokens also work), plus an optional default sender actor ID for replies.
 3. **Agent selection** — choose which AI agents to configure: **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)).
 4. **Automatic install** — each selected agent is configured immediately.
 
@@ -42,7 +42,7 @@ npx -y hubspot-conversations-mcp install --client all --token pat-eu1-... --send
 
 Use `--dry-run` to preview changes without writing anything, `--config-path` for a non-standard Claude Desktop config location, and `--hermes-config-path` (or `HERMES_CONFIG_PATH`) for a non-standard Hermes config location.
 
-> **Note on tokens:** HubSpot private app tokens can only be created in the HubSpot UI — there is no public API to generate them, so the CLI guides you through it instead of doing it for you.
+> **Note on tokens:** HubSpot service keys can only be created in the HubSpot UI — there is no public API to generate them, so the CLI guides you through it instead of doing it for you. Service keys replaced private apps (now "Legacy Apps") as HubSpot's recommended credential for single-account integrations; legacy private app tokens keep working.
 
 ### Manual: Claude Code
 
@@ -71,7 +71,7 @@ claude mcp add hubspot-conversations --env HUBSPOT_ACCESS_TOKEN=pat-eu1-... --en
 
 ### Prerequisite reminder: HubSpot scopes
 
-The token must belong to a private app (or OAuth2 app) with `conversations.read` + `conversations.write`, and `conversations.custom_channels.read`/`.write` if you use the custom-channel tools.
+The service key (or legacy private app token / OAuth2 app) must have `conversations.read` + `conversations.write`, and `conversations.custom_channels.read`/`.write` if you use the custom-channel tools. Note that service keys support REST API calls only — not webhooks — which is all this server needs.
 
 ### One-click bundle for Claude Desktop (MCPB)
 
@@ -95,12 +95,12 @@ npm publish
 
 | Environment variable | Required | Description |
 |---|---|---|
-| `HUBSPOT_ACCESS_TOKEN` | ✅ | Private app token (`pat-...`) or OAuth2 access token |
+| `HUBSPOT_ACCESS_TOKEN` | ✅ | Service key (`pat-...`), legacy private app token, or OAuth2 access token |
 | `HUBSPOT_DEFAULT_SENDER_ACTOR_ID` | | Default sender for `SendConversationMessage`, e.g. `A-12345` (agent actor = `A-<hubspot user id>`) |
 | `HUBSPOT_BASE_URL` | | Default `https://api.hubapi.com` |
 | `HUBSPOT_CONVERSATIONS_API_VERSION` | | Default `2026-09-beta` — update here when the API graduates from beta |
 | `HUBSPOT_CUSTOM_CHANNELS_API_VERSION` | | Default `2026-03` |
-| `HUBSPOT_AUTH_MODE` | | `private-app` or `bearer`; auto-detected from the token prefix when unset |
+| `HUBSPOT_AUTH_MODE` | | `bearer` (default — works for service keys, legacy tokens and OAuth2) or `private-app` for the legacy header |
 
 ## Tools (Arcade parity)
 
