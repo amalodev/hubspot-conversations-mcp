@@ -8,6 +8,7 @@ import {
   type ClientId,
   type InstallOptions,
 } from "./install.js";
+import { runLogin } from "./oauth.js";
 import { SERVER_VERSION } from "./server.js";
 
 export interface SetupFlags {
@@ -51,7 +52,7 @@ function nextSteps(clients: ClientId[], scope: string | undefined): string {
 
 function buildInstallOptions(
   flags: SetupFlags,
-  token: string,
+  token: string | undefined,
   senderActorId: string | undefined,
   clients: ClientId[],
   log?: (message: string) => void,
@@ -82,10 +83,8 @@ function ensureAnswered<T>(value: T | symbol): T {
   return value as T;
 }
 
-async function runInteractiveSetup(flags: SetupFlags): Promise<void> {
-  p.intro(`${PACKAGE_NAME} v${SERVER_VERSION} — setup`);
+async function askServiceKey(): Promise<string> {
   p.note(TOKEN_STEPS, "Step 1/3 · Create a HubSpot service key");
-
   const token = ensureAnswered(
     await p.password({
       message: "Paste your HubSpot service key",
@@ -94,6 +93,62 @@ async function runInteractiveSetup(flags: SetupFlags): Promise<void> {
   ).trim();
   if (!token.startsWith("pat-")) {
     p.log.warn('Service keys and legacy tokens start with "pat-" — assuming an OAuth access token.');
+  }
+  return token;
+}
+
+async function runOAuthLogin(): Promise<void> {
+  p.note(
+    `Each user signs in with their own HubSpot login — no shared credentials.
+Your org hosts a small OAuth broker (see the repo's api/ directory); you
+only need its URL. The browser will open for the HubSpot consent screen.`,
+    "Step 1/3 · Sign in with HubSpot",
+  );
+  const brokerUrl = ensureAnswered(
+    await p.text({
+      message: "Your org's OAuth broker URL",
+      placeholder: "https://your-broker.vercel.app",
+      initialValue: process.env.HUBSPOT_OAUTH_BROKER_URL?.trim() ?? "",
+      validate: (value) => {
+        if (!value?.trim()) return "The broker URL is required for OAuth login";
+        try {
+          new URL(value.trim());
+          return undefined;
+        } catch {
+          return "Enter a full URL, e.g. https://your-broker.vercel.app";
+        }
+      },
+    }),
+  ).trim();
+  await runLogin({ brokerUrl, log: (message) => p.log.info(message) });
+}
+
+async function runInteractiveSetup(flags: SetupFlags): Promise<void> {
+  p.intro(`${PACKAGE_NAME} v${SERVER_VERSION} — setup`);
+
+  const authMethod = ensureAnswered(
+    await p.select({
+      message: "How should this machine authenticate with HubSpot?",
+      options: [
+        {
+          value: "oauth" as const,
+          label: "Log in with HubSpot (per-user OAuth)",
+          hint: "each user signs in individually — requires your org's auth broker",
+        },
+        {
+          value: "service-key" as const,
+          label: "Service key",
+          hint: "one shared credential — simplest, also right for CI/automation",
+        },
+      ],
+    }),
+  );
+
+  let token: string | undefined;
+  if (authMethod === "service-key") {
+    token = await askServiceKey();
+  } else {
+    await runOAuthLogin();
   }
 
   const senderRaw = ensureAnswered(

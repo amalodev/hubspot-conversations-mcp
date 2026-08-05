@@ -1,4 +1,4 @@
-import type { HubSpotConfig } from "./config.js";
+import type { AuthMode, HubSpotConfig } from "./config.js";
 
 export class HubSpotApiError extends Error {
   constructor(
@@ -10,6 +10,30 @@ export class HubSpotApiError extends Error {
   ) {
     super(message);
     this.name = "HubSpotApiError";
+  }
+}
+
+/**
+ * Supplies auth headers for API requests. Static providers wrap a fixed
+ * service key; the OAuth provider refreshes tokens via the org's broker.
+ */
+export interface TokenProvider {
+  getAuthHeaders(): Promise<Record<string, string>>;
+  /** Called after a 401; returns true when the request should be retried. */
+  refreshAfterUnauthorized?(): Promise<boolean>;
+}
+
+export class StaticTokenProvider implements TokenProvider {
+  constructor(
+    private readonly accessToken: string,
+    private readonly authMode: AuthMode,
+  ) {}
+
+  async getAuthHeaders(): Promise<Record<string, string>> {
+    if (this.authMode === "private-app") {
+      return { "private-app": this.accessToken };
+    }
+    return { authorization: `Bearer ${this.accessToken}` };
   }
 }
 
@@ -49,19 +73,22 @@ export interface RequestOptions {
 }
 
 export class HubSpotClient {
+  private readonly provider: TokenProvider;
+
   constructor(
     private readonly config: HubSpotConfig,
     private readonly fetchImpl: typeof fetch = globalThis.fetch,
-  ) {}
-
-  private headers(): Record<string, string> {
-    const headers: Record<string, string> = { "content-type": "application/json" };
-    if (this.config.authMode === "private-app") {
-      headers["private-app"] = this.config.accessToken;
+    provider?: TokenProvider,
+  ) {
+    if (provider) {
+      this.provider = provider;
+    } else if (config.accessToken) {
+      this.provider = new StaticTokenProvider(config.accessToken, config.authMode);
     } else {
-      headers["authorization"] = `Bearer ${this.config.accessToken}`;
+      throw new Error(
+        "No HubSpot credentials: set HUBSPOT_ACCESS_TOKEN or run `hubspot-conversations-mcp login`.",
+      );
     }
-    return headers;
   }
 
   private rootPrefix(root: ApiRoot): string {
@@ -71,12 +98,13 @@ export class HubSpotClient {
     return `/conversations/conversations/${this.config.apiVersion}`;
   }
 
-  async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
-    const url =
-      `${this.config.baseUrl}${this.rootPrefix(options.root ?? "conversations")}` +
-      `${path}${buildQuery(options.query)}`;
-    const init: RequestInit = { method, headers: this.headers() };
-    if (options.body !== undefined) init.body = JSON.stringify(options.body);
+  private async send(method: string, url: string, body: unknown): Promise<Response> {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      ...(await this.provider.getAuthHeaders()),
+    };
+    const init: RequestInit = { method, headers };
+    if (body !== undefined) init.body = JSON.stringify(body);
 
     let response = await this.fetchImpl(url, init);
     if (RETRYABLE_STATUSES.has(response.status)) {
@@ -89,6 +117,19 @@ export class HubSpotClient {
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       response = await this.fetchImpl(url, init);
+    }
+    return response;
+  }
+
+  async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+    const url =
+      `${this.config.baseUrl}${this.rootPrefix(options.root ?? "conversations")}` +
+      `${path}${buildQuery(options.query)}`;
+
+    let response = await this.send(method, url, options.body);
+    if (response.status === 401 && this.provider.refreshAfterUnauthorized) {
+      const shouldRetry = await this.provider.refreshAfterUnauthorized();
+      if (shouldRetry) response = await this.send(method, url, options.body);
     }
 
     if (response.status === 204) return undefined as T;

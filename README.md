@@ -21,8 +21,8 @@ npx -y hubspot-conversations-mcp setup
 
 The wizard walks you through everything:
 
-1. **Token guide** — step-by-step instructions for creating a [HubSpot service key](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys) (**Development → Keys → Service Keys**) with the right scopes: `conversations.read`, `conversations.write`, and optionally `conversations.custom_channels.read`/`.write` for the custom-channel tools.
-2. **Token prompt** — paste the `pat-...` service key (input is masked; legacy private app tokens and OAuth2 access tokens also work), plus an optional default sender actor ID for replies.
+1. **Auth method** — choose between **per-user OAuth** (each user signs in with their own HubSpot login via your org's broker — see [Per-user OAuth](#per-user-oauth-team-setup)) or a **service key**. The service-key path shows step-by-step instructions for creating a [HubSpot service key](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/account-service-keys) (**Development → Keys → Service Keys**) with the right scopes: `conversations.read`, `conversations.write`, and optionally `conversations.custom_channels.read`/`.write` for the custom-channel tools.
+2. **Credentials** — either the masked service-key prompt, or the browser-based HubSpot sign-in; plus an optional default sender actor ID for replies.
 3. **Agent selection** — pick which AI agents to configure with an arrow-key multiselect (↑/↓ to move, space to toggle): **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)).
 4. **Automatic install** — each selected agent is configured immediately.
 
@@ -73,6 +73,40 @@ claude mcp add hubspot-conversations --env HUBSPOT_ACCESS_TOKEN=pat-eu1-... --en
 
 The service key (or legacy private app token / OAuth2 app) must have `conversations.read` + `conversations.write`, and `conversations.custom_channels.read`/`.write` if you use the custom-channel tools. Note that service keys support REST API calls only — not webhooks — which is all this server needs.
 
+## Per-user OAuth (team setup)
+
+Instead of sharing one service key across the team, each user can sign in with their **own HubSpot login**. Their tokens are issued individually, stored only on their machine, revocable per user, and die when the user is deactivated in HubSpot.
+
+The repo ships a **stateless OAuth broker** ([api/](api/)) — the only place the HubSpot app's client secret lives. It exchanges authorization codes and refreshes tokens, stores nothing, and sees no Conversations data: **all API traffic still goes directly from the user's machine to HubSpot**.
+
+### One-time org setup
+
+1. **Create a HubSpot app** (in a [developer account](https://developers.hubspot.com)): a public app with `"distribution": "private"`, allowlist your portal, redirect URL `http://localhost:4573/callback`, and the scopes `conversations.read` + `conversations.write` (plus `conversations.custom_channels.*` if needed). Note the client ID and client secret.
+2. **Deploy the broker to Vercel**: create a Vercel project from this repo and set two environment variables on it: `HUBSPOT_OAUTH_CLIENT_ID` and `HUBSPOT_OAUTH_CLIENT_SECRET`. Continuous deploys run via [deploy-broker.yml](.github/workflows/deploy-broker.yml) — add the repo secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (from the Vercel project's settings), and every change to `api/**` on `main` deploys automatically (the workflow skips with a notice until the secrets exist).
+3. Share the broker URL (e.g. `https://your-broker.vercel.app`) with the team — it is not a secret, and neither is the client ID (the CLI fetches it from the broker's `/api/config`).
+
+### Per user
+
+```bash
+npx -y hubspot-conversations-mcp login --broker-url https://your-broker.vercel.app
+```
+
+The browser opens for the HubSpot consent screen; tokens are stored in `~/.hubspot-conversations-mcp/tokens.json` (0600) and auto-refreshed through the broker. Then register the server without any token:
+
+```bash
+npx -y hubspot-conversations-mcp install --client all --oauth
+```
+
+…or run `setup` and pick "Log in with HubSpot". `whoami` shows the active credentials, `logout` removes them. `HUBSPOT_ACCESS_TOKEN` always takes precedence when set, so CI/automation keeps using a service key.
+
+### Broker endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/config` | Public app metadata (client ID) so users only need the broker URL |
+| `POST /api/exchange` | `{code, redirect_uri}` → tokens; redirect URIs are restricted to localhost |
+| `POST /api/refresh` | `{refresh_token}` → fresh access token |
+
 ### One-click bundle for Claude Desktop (MCPB)
 
 The repo ships a [manifest.json](manifest.json) following Anthropic's [MCP Bundle](https://github.com/anthropics/mcpb) format:
@@ -95,7 +129,9 @@ npm publish
 
 | Environment variable | Required | Description |
 |---|---|---|
-| `HUBSPOT_ACCESS_TOKEN` | ✅ | Service key (`pat-...`), legacy private app token, or OAuth2 access token |
+| `HUBSPOT_ACCESS_TOKEN` | (✅) | Service key (`pat-...`), legacy private app token, or OAuth2 access token. Optional when a per-user OAuth login exists on the machine; takes precedence when both are present |
+| `HUBSPOT_OAUTH_BROKER_URL` | | Default broker URL for the `login` command |
+| `HUBSPOT_TOKEN_STORE_PATH` | | OAuth token store location (default `~/.hubspot-conversations-mcp/tokens.json`) |
 | `HUBSPOT_DEFAULT_SENDER_ACTOR_ID` | | Default sender for `SendConversationMessage`, e.g. `A-12345` (agent actor = `A-<hubspot user id>`) |
 | `HUBSPOT_BASE_URL` | | Default `https://api.hubapi.com` |
 | `HUBSPOT_CONVERSATIONS_API_VERSION` | | Default `2026-09-beta` — update here when the API graduates from beta |

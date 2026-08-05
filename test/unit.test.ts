@@ -21,8 +21,10 @@ describe("buildQuery", () => {
 });
 
 describe("loadConfig", () => {
-  it("throws without a token", () => {
-    expect(() => loadConfig({} as NodeJS.ProcessEnv)).toThrow(/HUBSPOT_ACCESS_TOKEN/);
+  it("leaves accessToken unset without a token (OAuth store is resolved later)", () => {
+    const config = loadConfig({} as NodeJS.ProcessEnv);
+    expect(config.accessToken).toBeUndefined();
+    expect(config.authMode).toBe("bearer");
   });
 
   it("defaults to bearer auth — works for service keys, legacy tokens and OAuth alike", () => {

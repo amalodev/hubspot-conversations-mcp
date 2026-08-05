@@ -1,6 +1,6 @@
 {
   "name": "hubspot-conversations-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "MCP server for the HubSpot Conversations API — read threads and messages, send replies and comments, and manage conversation threads from any MCP client.",
   "type": "module",
   "bin": {
@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.api.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/index.js",

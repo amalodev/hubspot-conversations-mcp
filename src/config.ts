@@ -1,7 +1,8 @@
 export type AuthMode = "bearer" | "private-app";
 
 export interface HubSpotConfig {
-  accessToken: string;
+  /** Static service key / token. When unset, the OAuth token store is used instead. */
+  accessToken?: string;
   baseUrl: string;
   apiVersion: string;
   customChannelsApiVersion: string;
@@ -10,14 +11,7 @@ export interface HubSpotConfig {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): HubSpotConfig {
-  const accessToken = env.HUBSPOT_ACCESS_TOKEN?.trim();
-  if (!accessToken) {
-    throw new Error(
-      "HUBSPOT_ACCESS_TOKEN is not set. Create a HubSpot service key (Development → Keys → " +
-        "Service Keys) with the conversations.read and conversations.write scopes and set it here. " +
-        "Legacy private app tokens and OAuth2 access tokens also work.",
-    );
-  }
+  const accessToken = env.HUBSPOT_ACCESS_TOKEN?.trim() || undefined;
 
   const rawAuthMode = env.HUBSPOT_AUTH_MODE?.trim().toLowerCase();
   let authMode: AuthMode;

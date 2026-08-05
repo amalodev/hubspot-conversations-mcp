@@ -1,0 +1,50 @@
+name: Deploy OAuth broker to Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "vercel.json"
+      - ".github/workflows/deploy-broker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-broker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check secrets
+        id: check
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::notice::VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID not configured — skipping deploy."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.check.outputs.configured == 'true'
+      - uses: actions/setup-node@v5
+        if: steps.check.outputs.configured == 'true'
+        with:
+          node-version: 24.x
+      - name: Install Vercel CLI
+        if: steps.check.outputs.configured == 'true'
+        run: npm install -g vercel@latest
+      - name: Pull Vercel project settings
+        if: steps.check.outputs.configured == 'true'
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - name: Build
+        if: steps.check.outputs.configured == 'true'
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+      - name: Deploy
+        if: steps.check.outputs.configured == 'true'
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

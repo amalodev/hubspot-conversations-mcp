@@ -13,7 +13,9 @@ export const ALL_CLIENTS: ClientId[] = ["claude-desktop", "claude-code", "hermes
 
 export interface InstallOptions {
   clients: ClientId[];
-  token: string;
+  /** Service key. When omitted, entries are written without credentials and the
+   * server falls back to the per-user OAuth token store on each machine. */
+  token?: string;
   senderActorId?: string;
   /** claude mcp add scope: local, user, or project */
   scope?: string;
@@ -69,8 +71,9 @@ export function parseClientSelection(raw: string): ClientId[] {
   return selected;
 }
 
-export function buildServerEntry(token: string, senderActorId?: string): ServerEntry {
-  const env: Record<string, string> = { HUBSPOT_ACCESS_TOKEN: token };
+export function buildServerEntry(token?: string, senderActorId?: string): ServerEntry {
+  const env: Record<string, string> = {};
+  if (token) env.HUBSPOT_ACCESS_TOKEN = token;
   if (senderActorId) env.HUBSPOT_DEFAULT_SENDER_ACTOR_ID = senderActorId;
   return { command: "npx", args: ["-y", PACKAGE_NAME], env };
 }
@@ -150,13 +153,14 @@ export function installClaudeDesktop(options: InstallOptions): void {
 // --- Claude Code -------------------------------------------------------------
 
 export function claudeCodeCommand(options: {
-  token: string;
+  token?: string;
   senderActorId?: string;
   scope?: string;
 }): string[] {
   const args = ["mcp", "add"];
   if (options.scope) args.push("-s", options.scope);
-  args.push(MCP_SERVER_KEY, "--env", `HUBSPOT_ACCESS_TOKEN=${options.token}`);
+  args.push(MCP_SERVER_KEY);
+  if (options.token) args.push("--env", `HUBSPOT_ACCESS_TOKEN=${options.token}`);
   if (options.senderActorId) {
     args.push("--env", `HUBSPOT_DEFAULT_SENDER_ACTOR_ID=${options.senderActorId}`);
   }

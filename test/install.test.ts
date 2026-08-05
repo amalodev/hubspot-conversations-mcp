@@ -48,6 +48,13 @@ describe("buildServerEntry", () => {
       HUBSPOT_DEFAULT_SENDER_ACTOR_ID: "A-42",
     });
   });
+
+  it("omits the token env in OAuth mode (server uses the local token store)", () => {
+    expect(buildServerEntry(undefined, "A-42").env).toEqual({
+      HUBSPOT_DEFAULT_SENDER_ACTOR_ID: "A-42",
+    });
+    expect(buildServerEntry().env).toEqual({});
+  });
 });
 
 describe("mergeDesktopConfig", () => {
@@ -151,5 +158,21 @@ describe("claudeCodeCommand", () => {
     expect(args).toContain("-s");
     expect(args).toContain("user");
     expect(args).toContain("HUBSPOT_DEFAULT_SENDER_ACTOR_ID=A-42");
+  });
+
+  it("omits the token env flag in OAuth mode", () => {
+    const args = claudeCodeCommand({ scope: "user" });
+    expect(args.join(" ")).not.toContain("HUBSPOT_ACCESS_TOKEN");
+    expect(args).toEqual([
+      "mcp",
+      "add",
+      "-s",
+      "user",
+      "hubspot-conversations",
+      "--",
+      "npx",
+      "-y",
+      "hubspot-conversations-mcp",
+    ]);
   });
 });
