@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildServerEntry,
   claudeCodeCommand,
+  claudeCodeRemoveCommand,
   defaultDesktopConfigPath,
   defaultHermesConfigPath,
   mergeDesktopConfig,
@@ -149,5 +150,16 @@ describe("claudeCodeCommand", () => {
     const args = claudeCodeCommand({ senderActorId: "A-42" });
     expect(args).toContain("HUBSPOT_DEFAULT_SENDER_ACTOR_ID=A-42");
     expect(args.join(" ")).not.toContain("HUBSPOT_ACCESS_TOKEN");
+  });
+
+  it("builds the matching remove command for reinstalls", () => {
+    expect(claudeCodeRemoveCommand("user")).toEqual([
+      "mcp",
+      "remove",
+      "-s",
+      "user",
+      "hubspot-conversations",
+    ]);
+    expect(claudeCodeRemoveCommand()).toEqual(["mcp", "remove", "hubspot-conversations"]);
   });
 });

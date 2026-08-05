@@ -163,6 +163,13 @@ export function claudeCodeCommand(options: {
   return args;
 }
 
+export function claudeCodeRemoveCommand(scope?: string): string[] {
+  const args = ["mcp", "remove"];
+  if (scope) args.push("-s", scope);
+  args.push(MCP_SERVER_KEY);
+  return args;
+}
+
 export function installClaudeCode(options: InstallOptions): void {
   const log = options.log ?? console.log;
   const logError = options.logError ?? console.error;
@@ -172,9 +179,12 @@ export function installClaudeCode(options: InstallOptions): void {
     .join(" ")}`;
 
   if (options.dryRun) {
-    log(`[dry-run] Would run: ${printable}`);
+    log(`[dry-run] Would run: ${printable} (removing any existing registration first)`);
     return;
   }
+
+  // Reinstall semantics: drop any existing registration so reruns just work.
+  spawnSync("claude", claudeCodeRemoveCommand(options.scope), { stdio: "ignore" });
 
   const result = spawnSync("claude", args, { stdio: "inherit" });
   if (result.error || result.status !== 0) {
