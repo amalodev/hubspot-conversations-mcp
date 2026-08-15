@@ -2,8 +2,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { HubSpotClient } from "../client.js";
 import { runTool } from "../format.js";
+import type { ScopeCheck } from "../scopes.js";
 
-export function registerDirectoryTools(server: McpServer, client: HubSpotClient): void {
+export function registerDirectoryTools(
+  server: McpServer,
+  client: HubSpotClient,
+  can: ScopeCheck,
+): void {
+  // Inboxes, channels, channel accounts and actors are all read surfaces.
+  if (!can("conversations.read")) return;
   server.registerTool(
     "ListConversationInboxes",
     {

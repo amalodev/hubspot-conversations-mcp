@@ -6,3 +6,4 @@ dist/
 *.mcpb
 *.tgz
 .vercel/
+docs/superpowers/specs/

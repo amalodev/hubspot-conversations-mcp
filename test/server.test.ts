@@ -55,6 +55,42 @@ const TEST_PROVIDER = {
   getAuthHeaders: async () => ({ authorization: "Bearer test-oauth-token" }),
 };
 
+const CONVERSATIONS_READ_TOOLS = [
+  "GetChannelAccountDetails",
+  "GetInboxDetails",
+  "GetMessageHistoryForThread",
+  "ListConversationChannels",
+  "ListConversationInboxes",
+  "ResolveConversationActors",
+  "RetrieveActorDetails",
+  "RetrieveChannelAccounts",
+  "RetrieveChannelDetails",
+  "RetrieveConversationThreads",
+  "RetrieveFullMessageContent",
+  "RetrieveThreadById",
+  "RetrieveThreadMessage",
+];
+
+const CONVERSATIONS_WRITE_TOOLS = [
+  "ArchiveConversationThread",
+  "SendConversationMessage",
+  "UpdateConversationThread",
+];
+
+const CUSTOM_CHANNELS_READ_TOOLS = [
+  "GetCustomChannelAccounts",
+  "GetCustomChannelMessageDetails",
+  "RetrieveChannelAccountDetails",
+];
+
+const CUSTOM_CHANNELS_WRITE_TOOLS = [
+  "CreateChannelAccount",
+  "PublishCustomChannelMessage",
+  "UpdateChannelAccountInfo",
+  "UpdateChannelAccountStaging",
+  "UpdateMessageStatus",
+];
+
 const EXPECTED_TOOLS = [
   "ArchiveConversationThread",
   "CreateChannelAccount",
@@ -85,15 +121,22 @@ const EXPECTED_TOOLS = [
 async function setup(
   handler: (call: RecordedCall) => StubResponse,
   configOverrides: Partial<HubSpotConfig> = {},
+  grantedScopes?: string[],
 ) {
   const { impl, calls } = createStubFetch(handler);
   const config = { ...TEST_CONFIG, ...configOverrides };
   const hubspot = new HubSpotClient(config, impl, TEST_PROVIDER);
-  const server = createServer(hubspot, config);
+  const server = createServer(hubspot, config, { grantedScopes });
   const mcpClient = new Client({ name: "test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
   return { mcpClient, calls };
+}
+
+async function listToolNames(grantedScopes?: string[]): Promise<string[]> {
+  const { mcpClient } = await setup(() => ({ json: {} }), {}, grantedScopes);
+  const { tools } = await mcpClient.listTools();
+  return tools.map((tool) => tool.name).sort();
 }
 
 function resultText(result: Awaited<ReturnType<Client["callTool"]>>): string {
@@ -106,6 +149,61 @@ describe("hubspot-conversations MCP server", () => {
     const { mcpClient } = await setup(() => ({ json: {} }));
     const { tools } = await mcpClient.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(EXPECTED_TOOLS);
+  });
+
+  it("offers all tools when the token store has no recorded scopes (fail open)", async () => {
+    expect(await listToolNames(undefined)).toEqual(EXPECTED_TOOLS);
+    expect(await listToolNames([])).toEqual(EXPECTED_TOOLS);
+  });
+
+  it("offers only read tools for a read-only token", async () => {
+    expect(await listToolNames(["oauth", "conversations.read"])).toEqual(CONVERSATIONS_READ_TOOLS);
+  });
+
+  it("adds the write tools when conversations.write is granted", async () => {
+    expect(await listToolNames(["oauth", "conversations.read", "conversations.write"])).toEqual(
+      [...CONVERSATIONS_READ_TOOLS, ...CONVERSATIONS_WRITE_TOOLS].sort(),
+    );
+  });
+
+  it("gates each write group independently of its read group", async () => {
+    expect(
+      await listToolNames(["oauth", "conversations.read", "conversations.custom_channels.write"]),
+    ).toEqual([...CONVERSATIONS_READ_TOOLS, ...CUSTOM_CHANNELS_WRITE_TOOLS].sort());
+
+    expect(await listToolNames(["oauth", "conversations.write"])).toEqual(
+      [...CONVERSATIONS_WRITE_TOOLS].sort(),
+    );
+  });
+
+  it("gates custom-channel tools on their own scopes", async () => {
+    expect(
+      await listToolNames(["oauth", "conversations.read", "conversations.custom_channels.read"]),
+    ).toEqual([...CONVERSATIONS_READ_TOOLS, ...CUSTOM_CHANNELS_READ_TOOLS].sort());
+
+    expect(
+      await listToolNames([
+        "oauth",
+        "conversations.read",
+        "conversations.write",
+        "conversations.custom_channels.read",
+        "conversations.custom_channels.write",
+      ]),
+    ).toEqual(EXPECTED_TOOLS);
+  });
+
+  it("a read-only server rejects calls to write tools as unknown", async () => {
+    const { mcpClient, calls } = await setup(() => ({ json: {} }), {}, [
+      "oauth",
+      "conversations.read",
+    ]);
+    const result = await mcpClient.callTool({
+      name: "SendConversationMessage",
+      arguments: { thread_id: "1", text: "hej" },
+    });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain("not found");
+    expect(calls).toHaveLength(0);
   });
 
   it("retrieves threads with filters, repeated params and the provider's auth header", async () => {

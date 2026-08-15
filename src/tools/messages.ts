@@ -5,6 +5,7 @@ import type { HubSpotConfig } from "../config.js";
 import { parseRequestBody, runTool } from "../format.js";
 import type { MessageParticipant, Paged, PublicMessage, PublicThread } from "../hubspot-types.js";
 import { deriveReplyRecipients } from "../reply.js";
+import type { ScopeCheck } from "../scopes.js";
 
 const deliveryIdentifierSchema = z.object({
   type: z
@@ -82,7 +83,13 @@ export function registerMessageTools(
   server: McpServer,
   client: HubSpotClient,
   config: HubSpotConfig,
+  can: ScopeCheck,
 ): void {
+  if (can("conversations.read")) registerReadTools(server, client);
+  if (can("conversations.write")) registerWriteTools(server, client, config);
+}
+
+function registerReadTools(server: McpServer, client: HubSpotClient): void {
   server.registerTool(
     "GetMessageHistoryForThread",
     {
@@ -158,7 +165,13 @@ export function registerMessageTools(
         ),
       ),
   );
+}
 
+function registerWriteTools(
+  server: McpServer,
+  client: HubSpotClient,
+  config: HubSpotConfig,
+): void {
   server.registerTool(
     "SendConversationMessage",
     {

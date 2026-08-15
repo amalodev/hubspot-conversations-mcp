@@ -7,7 +7,7 @@ import {
   type ClientId,
   type InstallOptions,
 } from "./install.js";
-import { brokerEndpoint, runLogin } from "./oauth.js";
+import { brokerEndpoint, READ_ONLY_SCOPES, runLogin } from "./oauth.js";
 import { SERVER_VERSION } from "./server.js";
 
 export interface SetupFlags {
@@ -148,10 +148,30 @@ export async function runSetup(flags: SetupFlags): Promise<void> {
 
   const brokerUrl = await askVerifiedBrokerUrl();
 
-  p.log.step("Step 2/3 · Sign in with HubSpot — your browser will open the consent screen");
+  const accessLevel = ensureAnswered(
+    await p.select({
+      message: "Step 2/3 · Access level for this sign-in",
+      options: [
+        {
+          value: "read-write" as const,
+          label: "Read & write",
+          hint: "read conversations, send replies, manage threads",
+        },
+        {
+          value: "read-only" as const,
+          label: "Read-only",
+          hint: "browse conversations only — needs conversations.write optional on the app",
+        },
+      ],
+    }),
+  );
+
+  p.log.step("Sign in with HubSpot — your browser will open the consent screen");
   try {
     await runLogin({
       brokerUrl,
+      scopes: accessLevel === "read-only" ? [...READ_ONLY_SCOPES] : undefined,
+      optionalScopes: accessLevel === "read-only" ? [] : undefined,
       log: (message) => p.log.info(message),
       openBrowser: process.env.HUBSPOT_LOGIN_NO_OPEN?.trim() !== "1",
     });
@@ -161,14 +181,19 @@ export async function runSetup(flags: SetupFlags): Promise<void> {
     process.exit(1);
   }
 
-  const senderRaw = ensureAnswered(
-    await p.text({
-      message: "Default sender actor ID for replies (optional)",
-      placeholder: "A-12345 — press Enter to skip",
-      defaultValue: "",
-    }),
-  );
-  const senderActorId = senderRaw.trim() || undefined;
+  // A default sender only matters for SendConversationMessage, which
+  // read-only sign-ins don't get.
+  let senderActorId: string | undefined;
+  if (accessLevel === "read-write") {
+    const senderRaw = ensureAnswered(
+      await p.text({
+        message: "Default sender actor ID for replies (optional)",
+        placeholder: "A-12345 — press Enter to skip",
+        defaultValue: "",
+      }),
+    );
+    senderActorId = senderRaw.trim() || undefined;
+  }
 
   const clients = ensureAnswered(
     await p.multiselect({

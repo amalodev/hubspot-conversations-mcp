@@ -8,7 +8,17 @@ import { OAuthTokenProvider } from "./auth.js";
 import type { TokenProvider } from "./client.js";
 
 export const DEFAULT_CALLBACK_PORT = 4573;
-export const DEFAULT_SCOPES = ["conversations.read", "conversations.write"];
+/**
+ * Default scopes, split the way HubSpot's authorize URL demands: scopes the
+ * app marks *required* go in `scope`, scopes it marks *optional* go in
+ * `optional_scope` — an app-optional scope listed in `scope` (or a required
+ * one missing from it) makes HubSpot reject the consent screen outright.
+ * These defaults match the app template in the README (write is optional).
+ */
+export const DEFAULT_SCOPES = ["conversations.read"];
+export const DEFAULT_OPTIONAL_SCOPES = ["conversations.write"];
+/** Requested by `login --read-only` — needs conversations.write to be an *optional* scope on the app. */
+export const READ_ONLY_SCOPES = ["conversations.read"];
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface TokenStore {
@@ -66,11 +76,15 @@ export function buildAuthorizeUrl(
   redirectUri: string,
   scopes: string[],
   state: string,
+  optionalScopes: string[] = [],
 ): string {
   const url = new URL("https://app.hubspot.com/oauth/authorize");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("scope", scopes.join(" "));
+  if (optionalScopes.length > 0) {
+    url.searchParams.set("optional_scope", optionalScopes.join(" "));
+  }
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -211,7 +225,14 @@ function waitForCallback(
 export interface LoginOptions {
   brokerUrl: string;
   clientId?: string;
+  /** Scopes for the authorize URL's `scope` param (app-required scopes). */
   scopes?: string[];
+  /**
+   * Scopes for the `optional_scope` param (app-optional scopes). Defaults to
+   * DEFAULT_OPTIONAL_SCOPES only when `scopes` is also defaulted — an explicit
+   * scope list takes full control of the request.
+   */
+  optionalScopes?: string[];
   port?: number;
   openBrowser?: boolean;
   log?: (message: string) => void;
@@ -225,6 +246,8 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   const env = options.env ?? process.env;
   const port = options.port ?? DEFAULT_CALLBACK_PORT;
   const scopes = options.scopes?.length ? options.scopes : DEFAULT_SCOPES;
+  const optionalScopes =
+    options.optionalScopes ?? (options.scopes?.length ? [] : DEFAULT_OPTIONAL_SCOPES);
   const brokerUrl = options.brokerUrl.replace(/\/+$/, "");
 
   let clientId = options.clientId;
@@ -242,7 +265,11 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
 
   const redirectUri = `http://localhost:${port}/callback`;
   const state = randomUUID();
-  const authorizeUrl = buildAuthorizeUrl(clientId, redirectUri, scopes, state);
+  const authorizeUrl = buildAuthorizeUrl(clientId, redirectUri, scopes, state, optionalScopes);
+  log(
+    `Requesting scopes: ${scopes.join(", ")}` +
+      (optionalScopes.length > 0 ? ` (optional: ${optionalScopes.join(", ")})` : ""),
+  );
 
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -265,6 +292,17 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
     let store = storeFromTokenResponse(brokerUrl, tokens);
     const info = await introspectAccessToken(store.accessToken, fetchImpl);
     if (info) store = { ...store, ...info };
+    if (!store.scopes?.length) {
+      // The recorded scopes drive which tools the server offers. When
+      // introspection fails, record what was requested (granted ⊆ requested)
+      // rather than leaving them unknown, which would offer every tool — the
+      // opposite of what e.g. a --read-only sign-in asked for.
+      store = { ...store, scopes: [...scopes, ...optionalScopes] };
+      log(
+        "Note: could not verify the granted scopes with HubSpot — recorded the requested " +
+          "scopes instead. Re-run login later to record the actual grants.",
+      );
+    }
     const filePath = writeTokenStore(store, env);
     log(
       `✔ Signed in${store.user ? ` as ${store.user}` : ""}${store.hubId ? ` (portal ${store.hubId})` : ""}. ` +
@@ -279,14 +317,23 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   }
 }
 
-/** Resolve the per-user OAuth credentials for the running server. */
-export function resolveTokenProvider(
+export interface Session {
+  provider: TokenProvider;
+  /** Scopes granted at login (from token introspection); undefined when unknown. */
+  grantedScopes?: string[];
+}
+
+/** Resolve the per-user OAuth credentials and granted scopes for the running server. */
+export function resolveSession(
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
-): TokenProvider {
+): Session {
   const store = readTokenStore(env);
   if (store) {
-    return new OAuthTokenProvider(store, fetchImpl, env);
+    return {
+      provider: new OAuthTokenProvider(store, fetchImpl, env),
+      grantedScopes: store.scopes,
+    };
   }
   throw new Error(
     "Not signed in to HubSpot. Run `npx hubspot-conversations-mcp login` " +

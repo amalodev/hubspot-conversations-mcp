@@ -143,10 +143,27 @@ describe("token store", () => {
     expect(url.origin + url.pathname).toBe("https://app.hubspot.com/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("cid");
     expect(url.searchParams.get("scope")).toBe("a.read b.write");
+    expect(url.searchParams.get("optional_scope")).toBeNull();
     expect(url.searchParams.get("state")).toBe("state-1");
 
     expect(brokerEndpoint("https://b.test", "refresh")).toBe("https://b.test/api/refresh");
     expect(brokerEndpoint("https://b.test/", "config")).toBe("https://b.test/api/config");
+  });
+
+  it("puts app-optional scopes in optional_scope, not scope", () => {
+    const url = new URL(
+      buildAuthorizeUrl(
+        "cid",
+        "http://localhost:4573/callback",
+        ["conversations.read"],
+        "state-2",
+        ["conversations.write", "conversations.custom_channels.write"],
+      ),
+    );
+    expect(url.searchParams.get("scope")).toBe("conversations.read");
+    expect(url.searchParams.get("optional_scope")).toBe(
+      "conversations.write conversations.custom_channels.write",
+    );
   });
 
   it("maps token responses and keeps the previous refresh token", () => {
@@ -198,6 +215,38 @@ describe("OAuthTokenProvider", () => {
     const persisted = JSON.parse(readFileSync(env.HUBSPOT_TOKEN_STORE_PATH!, "utf8")) as TokenStore;
     expect(persisted.accessToken).toBe("fresh");
     expect(persisted.refreshToken).toBe("rt-1");
+  });
+
+  it("adopts a replaced on-disk store instead of clobbering it with the stale grant", async () => {
+    // The provider starts from a read+write grant…
+    const stale: TokenStore = {
+      version: 1,
+      brokerUrl: "https://broker.test",
+      accessToken: "old-rw",
+      refreshToken: "rt-old",
+      expiresAt: Date.now() - 1000,
+      scopes: ["oauth", "conversations.read", "conversations.write"],
+    };
+    // …but the user re-logged in read-only while the server was running.
+    const relogin: TokenStore = {
+      version: 1,
+      brokerUrl: "https://broker.test",
+      accessToken: "new-ro",
+      refreshToken: "rt-new",
+      expiresAt: Date.now() + 3600_000,
+      scopes: ["oauth", "conversations.read"],
+    };
+    writeTokenStore(relogin, env);
+
+    const fetchStub = (async () => {
+      throw new Error("must not refresh the stale grant");
+    }) as typeof fetch;
+
+    const provider = new OAuthTokenProvider(stale, fetchStub, env);
+    expect(await provider.getAuthHeaders()).toEqual({ authorization: "Bearer new-ro" });
+    const persisted = JSON.parse(readFileSync(env.HUBSPOT_TOKEN_STORE_PATH!, "utf8")) as TokenStore;
+    expect(persisted.refreshToken).toBe("rt-new");
+    expect(persisted.scopes).toEqual(["oauth", "conversations.read"]);
   });
 });
 
