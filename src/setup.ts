@@ -7,7 +7,8 @@ import {
   type ClientId,
   type InstallOptions,
 } from "./install.js";
-import { brokerEndpoint, runLogin } from "./oauth.js";
+import { brokerEndpoint, READ_ONLY_SCOPES, runLogin, type BrokerScopeProfile } from "./oauth.js";
+import { grantsWriteAccess } from "./scopes.js";
 import { SERVER_VERSION } from "./server.js";
 
 export interface SetupFlags {
@@ -18,7 +19,7 @@ export interface SetupFlags {
 }
 
 const README_OAUTH_URL =
-  "https://github.com/amalodev/hubspot-conversations-mcp#per-user-oauth-team-setup";
+  "https://github.com/amalodev/hubspot-conversations-mcp#org-setup-one-time-10-minutes";
 
 const BROKER_GUIDE = `A broker is a small stateless service your org hosts (free on Vercel).
 It holds your HubSpot app's client secret so employees never see it,
@@ -64,14 +65,31 @@ function ensureAnswered<T>(value: T | symbol): T {
 
 async function verifyBroker(
   brokerUrl: string,
-): Promise<{ ok: true; clientId: string } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; clientId: string; profile: BrokerScopeProfile; hasReadOnlyApp: boolean }
+  | { ok: false; message: string }
+> {
   try {
     const response = await fetch(brokerEndpoint(brokerUrl, "config"), {
       signal: AbortSignal.timeout(8000),
     });
-    const data = (await response.json().catch(() => ({}))) as { clientId?: string };
+    const data = (await response.json().catch(() => ({}))) as {
+      clientId?: string;
+      scopes?: unknown;
+      optionalScopes?: unknown;
+      profiles?: Record<string, { clientId?: string } | undefined>;
+    };
     if (response.ok && typeof data.clientId === "string" && data.clientId) {
-      return { ok: true, clientId: data.clientId };
+      const asScopeList = (value: unknown): string[] | undefined =>
+        Array.isArray(value)
+          ? value.filter((item): item is string => typeof item === "string")
+          : undefined;
+      return {
+        ok: true,
+        clientId: data.clientId,
+        profile: { scopes: asScopeList(data.scopes), optionalScopes: asScopeList(data.optionalScopes) },
+        hasReadOnlyApp: !!data.profiles?.["read-only"]?.clientId,
+      };
     }
     return {
       ok: false,
@@ -85,7 +103,11 @@ async function verifyBroker(
   }
 }
 
-async function askVerifiedBrokerUrl(): Promise<string> {
+async function askVerifiedBrokerUrl(): Promise<{
+  brokerUrl: string;
+  profile: BrokerScopeProfile;
+  hasReadOnlyApp: boolean;
+}> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const brokerUrl = ensureAnswered(
       await p.text({
@@ -108,8 +130,11 @@ async function askVerifiedBrokerUrl(): Promise<string> {
     spinner.start(`Testing the broker at ${brokerUrl}`);
     const result = await verifyBroker(brokerUrl);
     if (result.ok) {
-      spinner.stop(`Broker OK — serving client ID ${result.clientId.slice(0, 8)}…`);
-      return brokerUrl;
+      spinner.stop(
+        `Broker OK — serving client ID ${result.clientId.slice(0, 8)}…` +
+          (result.hasReadOnlyApp ? " (read-only app available)" : ""),
+      );
+      return { brokerUrl, profile: result.profile, hasReadOnlyApp: result.hasReadOnlyApp };
     }
     spinner.stop("Broker test failed");
     p.log.error(result.message);
@@ -146,12 +171,69 @@ export async function runSetup(flags: SetupFlags): Promise<void> {
     p.log.info("When the broker is deployed, enter its URL below to continue.");
   }
 
-  const brokerUrl = await askVerifiedBrokerUrl();
+  const { brokerUrl, profile, hasReadOnlyApp } = await askVerifiedBrokerUrl();
 
-  p.log.step("Step 2/3 · Sign in with HubSpot — your browser will open the consent screen");
+  // A broker with a read-only app gives a real choice: which app to sign in
+  // to. Otherwise the broker's advertised scope profile decides the access
+  // level, and without either we fall back to asking + requesting reduced
+  // scopes from the single app (best effort — an existing write grant wins).
+  const advertised = !!profile.scopes?.length;
+  let accessLevel: "read-write" | "read-only";
+  if (hasReadOnlyApp) {
+    accessLevel = ensureAnswered(
+      await p.select({
+        message: "Step 2/3 · Access level for this sign-in",
+        options: [
+          {
+            value: "read-write" as const,
+            label: "Read & write",
+            hint: "read conversations, send replies, manage threads",
+          },
+          {
+            value: "read-only" as const,
+            label: "Read-only",
+            hint: "signs in through the broker's read-only app — the token can never write",
+          },
+        ],
+      }),
+    );
+  } else if (advertised) {
+    const allScopes = [...(profile.scopes ?? []), ...(profile.optionalScopes ?? [])];
+    accessLevel = grantsWriteAccess(allScopes) ? "read-write" : "read-only";
+    p.log.info(
+      `Step 2/3 · This broker's app grants ${accessLevel === "read-only" ? "read-only" : "read & write"} ` +
+        `access (${allScopes.join(", ")}).`,
+    );
+  } else {
+    accessLevel = ensureAnswered(
+      await p.select({
+        message: "Step 2/3 · Access level for this sign-in",
+        options: [
+          {
+            value: "read-write" as const,
+            label: "Read & write",
+            hint: "read conversations, send replies, manage threads",
+          },
+          {
+            value: "read-only" as const,
+            label: "Read-only (best effort)",
+            hint: "requests only conversations.read from the app — an existing write grant on the portal still wins",
+          },
+        ],
+      }),
+    );
+  }
+
+  p.log.step("Sign in with HubSpot — your browser will open the consent screen");
+  const readOnly = accessLevel === "read-only";
   try {
     await runLogin({
       brokerUrl,
+      profile: hasReadOnlyApp && readOnly ? "read-only" : undefined,
+      // Without a read-only app, a read-only choice falls back to requesting
+      // reduced scopes from the single app; advertised profiles need nothing.
+      scopes: !hasReadOnlyApp && !advertised && readOnly ? [...READ_ONLY_SCOPES] : undefined,
+      optionalScopes: !hasReadOnlyApp && !advertised && readOnly ? [] : undefined,
       log: (message) => p.log.info(message),
       openBrowser: process.env.HUBSPOT_LOGIN_NO_OPEN?.trim() !== "1",
     });
@@ -161,14 +243,19 @@ export async function runSetup(flags: SetupFlags): Promise<void> {
     process.exit(1);
   }
 
-  const senderRaw = ensureAnswered(
-    await p.text({
-      message: "Default sender actor ID for replies (optional)",
-      placeholder: "A-12345 — press Enter to skip",
-      defaultValue: "",
-    }),
-  );
-  const senderActorId = senderRaw.trim() || undefined;
+  // A default sender only matters for SendConversationMessage, which
+  // read-only sign-ins don't get.
+  let senderActorId: string | undefined;
+  if (accessLevel === "read-write") {
+    const senderRaw = ensureAnswered(
+      await p.text({
+        message: "Default sender actor ID for replies (optional)",
+        placeholder: "A-12345 — press Enter to skip",
+        defaultValue: "",
+      }),
+    );
+    senderActorId = senderRaw.trim() || undefined;
+  }
 
   const clients = ensureAnswered(
     await p.multiselect({

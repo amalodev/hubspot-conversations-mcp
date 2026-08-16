@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { HubSpotClient } from "../client.js";
 import { parseRequestBody, runTool } from "../format.js";
+import type { ScopeCheck } from "../scopes.js";
 
 const deliveryIdentifierTypeSchema = z
   .enum(["HS_EMAIL_ADDRESS", "HS_PHONE_NUMBER", "CHANNEL_SPECIFIC_OPAQUE_ID", "HS_SHORT_CODE"])
@@ -37,56 +38,16 @@ const PUBLISH_MESSAGE_BODY_SCHEMA = {
   },
 };
 
-export function registerCustomChannelTools(server: McpServer, client: HubSpotClient): void {
-  server.registerTool(
-    "CreateChannelAccount",
-    {
-      title: "Create a channel account (custom channel)",
-      description:
-        "Create a new account within a specific custom communication channel. Enables multiple " +
-        "accounts to communicate over a single channel with different delivery identifiers. " +
-        "Requires the conversations.custom_channels.write scope.",
-      inputSchema: {
-        account_name: z
-          .string()
-          .describe("The name of the account to be created for the channel"),
-        channel_id: z
-          .string()
-          .describe("The unique identifier for the custom channel where the account will be created"),
-        inbox_id: z
-          .string()
-          .describe("The unique identifier for the inbox where the channel account will be created"),
-        is_authorized: z
-          .boolean()
-          .describe("Whether the account should be authorized. Set to true for authorized accounts"),
-        delivery_identifier_type: deliveryIdentifierTypeSchema.optional(),
-        delivery_identifier_value: z
-          .string()
-          .optional()
-          .describe("The delivery identifier value: an E.164 phone number, an email address, or a channel-specific ID"),
-      },
-    },
-    async (args) =>
-      runTool(() => {
-        const body: Record<string, unknown> = {
-          name: args.account_name,
-          inboxId: args.inbox_id,
-          authorized: args.is_authorized,
-        };
-        if (args.delivery_identifier_type && args.delivery_identifier_value) {
-          body.deliveryIdentifier = {
-            type: args.delivery_identifier_type,
-            value: args.delivery_identifier_value,
-          };
-        }
-        return client.request(
-          "POST",
-          `/${encodeURIComponent(args.channel_id)}/channel-accounts`,
-          { body, root: "customChannels" },
-        );
-      }),
-  );
+export function registerCustomChannelTools(
+  server: McpServer,
+  client: HubSpotClient,
+  can: ScopeCheck,
+): void {
+  if (can("conversations.custom_channels.read")) registerReadTools(server, client);
+  if (can("conversations.custom_channels.write")) registerWriteTools(server, client);
+}
 
+function registerReadTools(server: McpServer, client: HubSpotClient): void {
   server.registerTool(
     "GetCustomChannelAccounts",
     {
@@ -136,6 +97,84 @@ export function registerCustomChannelTools(server: McpServer, client: HubSpotCli
           { root: "customChannels" },
         ),
       ),
+  );
+
+  server.registerTool(
+    "GetCustomChannelMessageDetails",
+    {
+      title: "Get custom channel message details",
+      description:
+        "Get the details of a specific message sent through a custom channel — message content, " +
+        "sender information, and timestamps.",
+      inputSchema: {
+        channel_id: z
+          .string()
+          .describe("The unique identifier for the custom channel the message was sent through"),
+        message_id: z
+          .string()
+          .describe("The unique identifier of the message to retrieve details for"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) =>
+      runTool(() =>
+        client.request(
+          "GET",
+          `/${encodeURIComponent(args.channel_id)}/messages/${encodeURIComponent(args.message_id)}`,
+          { root: "customChannels" },
+        ),
+      ),
+  );
+}
+
+function registerWriteTools(server: McpServer, client: HubSpotClient): void {
+  server.registerTool(
+    "CreateChannelAccount",
+    {
+      title: "Create a channel account (custom channel)",
+      description:
+        "Create a new account within a specific custom communication channel. Enables multiple " +
+        "accounts to communicate over a single channel with different delivery identifiers. " +
+        "Requires the conversations.custom_channels.write scope.",
+      inputSchema: {
+        account_name: z
+          .string()
+          .describe("The name of the account to be created for the channel"),
+        channel_id: z
+          .string()
+          .describe("The unique identifier for the custom channel where the account will be created"),
+        inbox_id: z
+          .string()
+          .describe("The unique identifier for the inbox where the channel account will be created"),
+        is_authorized: z
+          .boolean()
+          .describe("Whether the account should be authorized. Set to true for authorized accounts"),
+        delivery_identifier_type: deliveryIdentifierTypeSchema.optional(),
+        delivery_identifier_value: z
+          .string()
+          .optional()
+          .describe("The delivery identifier value: an E.164 phone number, an email address, or a channel-specific ID"),
+      },
+    },
+    async (args) =>
+      runTool(() => {
+        const body: Record<string, unknown> = {
+          name: args.account_name,
+          inboxId: args.inbox_id,
+          authorized: args.is_authorized,
+        };
+        if (args.delivery_identifier_type && args.delivery_identifier_value) {
+          body.deliveryIdentifier = {
+            type: args.delivery_identifier_type,
+            value: args.delivery_identifier_value,
+          };
+        }
+        return client.request(
+          "POST",
+          `/${encodeURIComponent(args.channel_id)}/channel-accounts`,
+          { body, root: "customChannels" },
+        );
+      }),
   );
 
   server.registerTool(
@@ -317,33 +356,6 @@ export function registerCustomChannelTools(server: McpServer, client: HubSpotCli
           { body, root: "customChannels" },
         );
       }),
-  );
-
-  server.registerTool(
-    "GetCustomChannelMessageDetails",
-    {
-      title: "Get custom channel message details",
-      description:
-        "Get the details of a specific message sent through a custom channel — message content, " +
-        "sender information, and timestamps.",
-      inputSchema: {
-        channel_id: z
-          .string()
-          .describe("The unique identifier for the custom channel the message was sent through"),
-        message_id: z
-          .string()
-          .describe("The unique identifier of the message to retrieve details for"),
-      },
-      annotations: { readOnlyHint: true },
-    },
-    async (args) =>
-      runTool(() =>
-        client.request(
-          "GET",
-          `/${encodeURIComponent(args.channel_id)}/messages/${encodeURIComponent(args.message_id)}`,
-          { root: "customChannels" },
-        ),
-      ),
   );
 
   server.registerTool(

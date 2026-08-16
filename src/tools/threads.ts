@@ -2,8 +2,18 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { HubSpotClient } from "../client.js";
 import { runTool } from "../format.js";
+import type { ScopeCheck } from "../scopes.js";
 
-export function registerThreadTools(server: McpServer, client: HubSpotClient): void {
+export function registerThreadTools(
+  server: McpServer,
+  client: HubSpotClient,
+  can: ScopeCheck,
+): void {
+  if (can("conversations.read")) registerReadTools(server, client);
+  if (can("conversations.write")) registerWriteTools(server, client);
+}
+
+function registerReadTools(server: McpServer, client: HubSpotClient): void {
   server.registerTool(
     "RetrieveConversationThreads",
     {
@@ -91,7 +101,9 @@ export function registerThreadTools(server: McpServer, client: HubSpotClient): v
         }),
       ),
   );
+}
 
+function registerWriteTools(server: McpServer, client: HubSpotClient): void {
   server.registerTool(
     "UpdateConversationThread",
     {

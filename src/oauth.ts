@@ -8,8 +8,21 @@ import { OAuthTokenProvider } from "./auth.js";
 import type { TokenProvider } from "./client.js";
 
 export const DEFAULT_CALLBACK_PORT = 4573;
-export const DEFAULT_SCOPES = ["conversations.read", "conversations.write"];
+/**
+ * Default scopes, split the way HubSpot's authorize URL demands: scopes the
+ * app marks *required* go in `scope`, scopes it marks *optional* go in
+ * `optional_scope` — an app-optional scope listed in `scope` (or a required
+ * one missing from it) makes HubSpot reject the consent screen outright.
+ * These defaults match the app template in the README (write is optional).
+ */
+export const DEFAULT_SCOPES = ["conversations.read"];
+export const DEFAULT_OPTIONAL_SCOPES = ["conversations.write"];
+/** Requested by `login --read-only` — needs conversations.write to be an *optional* scope on the app. */
+export const READ_ONLY_SCOPES = ["conversations.read"];
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Which of the broker's HubSpot apps a sign-in went through. */
+export type LoginProfile = "read-write" | "read-only";
 
 export interface TokenStore {
   version: 1;
@@ -21,6 +34,8 @@ export interface TokenStore {
   hubId?: number;
   user?: string;
   scopes?: string[];
+  /** Broker app profile the tokens belong to — refreshes must use the same app's credentials. */
+  profile?: LoginProfile;
 }
 
 export function tokenStorePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -66,11 +81,15 @@ export function buildAuthorizeUrl(
   redirectUri: string,
   scopes: string[],
   state: string,
+  optionalScopes: string[] = [],
 ): string {
   const url = new URL("https://app.hubspot.com/oauth/authorize");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("scope", scopes.join(" "));
+  if (optionalScopes.length > 0) {
+    url.searchParams.set("optional_scope", optionalScopes.join(" "));
+  }
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -86,7 +105,7 @@ interface HubSpotTokenResponse {
 export function storeFromTokenResponse(
   brokerUrl: string,
   tokens: HubSpotTokenResponse,
-  previous?: Pick<TokenStore, "refreshToken" | "hubId" | "user" | "scopes">,
+  previous?: Pick<TokenStore, "refreshToken" | "hubId" | "user" | "scopes" | "profile">,
 ): TokenStore {
   if (!tokens.access_token) {
     throw new Error(tokens.message ?? tokens.error ?? "Token response had no access_token.");
@@ -100,6 +119,7 @@ export function storeFromTokenResponse(
     hubId: previous?.hubId,
     user: previous?.user,
     scopes: previous?.scopes,
+    profile: previous?.profile,
   };
 }
 
@@ -128,7 +148,16 @@ export async function refreshViaBroker(
   fetchImpl: typeof fetch = fetch,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<TokenStore> {
-  const tokens = await postBroker(store.brokerUrl, "refresh", { refresh_token: store.refreshToken }, fetchImpl);
+  const tokens = await postBroker(
+    store.brokerUrl,
+    "refresh",
+    {
+      refresh_token: store.refreshToken,
+      // The broker must refresh with the same app's credentials the tokens came from.
+      ...(store.profile === "read-only" ? { profile: store.profile } : {}),
+    },
+    fetchImpl,
+  );
   const updated = storeFromTokenResponse(store.brokerUrl, tokens, store);
   writeTokenStore(updated, env);
   return updated;
@@ -208,10 +237,53 @@ function waitForCallback(
   });
 }
 
+/** Scope profile a broker may advertise via /api/config (matching its app's config). */
+export interface BrokerScopeProfile {
+  scopes?: string[];
+  optionalScopes?: string[];
+}
+
+/**
+ * Resolve which scopes a login requests: explicit options win, then the
+ * broker-advertised profile, then the built-in defaults. An explicit `scopes`
+ * list takes full control — no optional scopes are added to it implicitly.
+ */
+export function resolveRequestedScopes(
+  options: Pick<LoginOptions, "scopes" | "optionalScopes">,
+  broker: BrokerScopeProfile = {},
+): { scopes: string[]; optionalScopes: string[] } {
+  if (options.scopes?.length) {
+    return { scopes: options.scopes, optionalScopes: options.optionalScopes ?? [] };
+  }
+  if (broker.scopes?.length) {
+    return {
+      scopes: broker.scopes,
+      optionalScopes: options.optionalScopes ?? broker.optionalScopes ?? [],
+    };
+  }
+  return {
+    scopes: DEFAULT_SCOPES,
+    optionalScopes: options.optionalScopes ?? DEFAULT_OPTIONAL_SCOPES,
+  };
+}
+
 export interface LoginOptions {
   brokerUrl: string;
   clientId?: string;
+  /**
+   * Which of the broker's apps to sign in through. "read-only" uses the
+   * broker's read-only app (HUBSPOT_OAUTH_READ_ONLY_* on the deployment) and
+   * fails with a clear error when the broker has none. Default "read-write".
+   */
+  profile?: LoginProfile;
+  /** Scopes for the authorize URL's `scope` param (app-required scopes). */
   scopes?: string[];
+  /**
+   * Scopes for the `optional_scope` param (app-optional scopes). Defaults to
+   * DEFAULT_OPTIONAL_SCOPES only when `scopes` is also defaulted — an explicit
+   * scope list takes full control of the request.
+   */
+  optionalScopes?: string[];
   port?: number;
   openBrowser?: boolean;
   log?: (message: string) => void;
@@ -224,25 +296,55 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const env = options.env ?? process.env;
   const port = options.port ?? DEFAULT_CALLBACK_PORT;
-  const scopes = options.scopes?.length ? options.scopes : DEFAULT_SCOPES;
   const brokerUrl = options.brokerUrl.replace(/\/+$/, "");
+  const profile: LoginProfile = options.profile ?? "read-write";
 
   let clientId = options.clientId;
+  let brokerProfile: BrokerScopeProfile = {};
   if (!clientId) {
     const response = await fetchImpl(brokerEndpoint(brokerUrl, "config"));
-    const data = (await response.json().catch(() => ({}))) as { clientId?: string };
+    interface ConfigEntry {
+      clientId?: string;
+      scopes?: unknown;
+      optionalScopes?: unknown;
+    }
+    const data = (await response.json().catch(() => ({}))) as ConfigEntry & {
+      profiles?: Record<string, ConfigEntry | undefined>;
+    };
     if (!response.ok || !data.clientId) {
       throw new Error(
         `Could not fetch the app's client ID from the broker (${brokerEndpoint(brokerUrl, "config")}). ` +
           "Check the broker URL, or pass --client-id explicitly.",
       );
     }
-    clientId = data.clientId;
+    // Top-level config fields mirror the read-write app (older brokers only have those).
+    const entry = profile === "read-only" ? data.profiles?.["read-only"] : (data.profiles?.["read-write"] ?? data);
+    if (profile === "read-only" && !entry?.clientId) {
+      throw new Error(
+        "This broker has no read-only app configured — set HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID and " +
+          "HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET on the broker deployment (see the README's " +
+          "read-only section).",
+      );
+    }
+    clientId = entry!.clientId!;
+    const asScopeList = (value: unknown): string[] | undefined =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+    brokerProfile = { scopes: asScopeList(entry!.scopes), optionalScopes: asScopeList(entry!.optionalScopes) };
+  }
+  let { scopes, optionalScopes } = resolveRequestedScopes(options, brokerProfile);
+  if (profile === "read-only" && !options.scopes?.length && !brokerProfile.scopes?.length) {
+    // Safety net when the read-only app's scopes weren't advertised (e.g. --client-id given).
+    scopes = [...READ_ONLY_SCOPES];
+    optionalScopes = options.optionalScopes ?? [];
   }
 
   const redirectUri = `http://localhost:${port}/callback`;
   const state = randomUUID();
-  const authorizeUrl = buildAuthorizeUrl(clientId, redirectUri, scopes, state);
+  const authorizeUrl = buildAuthorizeUrl(clientId, redirectUri, scopes, state, optionalScopes);
+  log(
+    `Requesting scopes: ${scopes.join(", ")}` +
+      (optionalScopes.length > 0 ? ` (optional: ${optionalScopes.join(", ")})` : ""),
+  );
 
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -261,10 +363,37 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
     if (options.openBrowser !== false) openBrowser(authorizeUrl);
 
     const code = await waitForCallback(server, state);
-    const tokens = await postBroker(brokerUrl, "exchange", { code, redirect_uri: redirectUri }, fetchImpl);
-    let store = storeFromTokenResponse(brokerUrl, tokens);
+    const tokens = await postBroker(
+      brokerUrl,
+      "exchange",
+      {
+        code,
+        redirect_uri: redirectUri,
+        ...(profile === "read-only" ? { profile } : {}),
+      },
+      fetchImpl,
+    );
+    let store = { ...storeFromTokenResponse(brokerUrl, tokens), profile };
     const info = await introspectAccessToken(store.accessToken, fetchImpl);
     if (info) store = { ...store, ...info };
+    if (!store.scopes?.length) {
+      // The recorded scopes drive which tools the server offers. When
+      // introspection fails, record what was requested (granted ⊆ requested)
+      // rather than leaving them unknown, which would offer every tool — the
+      // opposite of what e.g. a --read-only sign-in asked for.
+      store = { ...store, scopes: [...scopes, ...optionalScopes] };
+      log(
+        "Note: could not verify the granted scopes with HubSpot — recorded the requested " +
+          "scopes instead. Re-run login later to record the actual grants.",
+      );
+    }
+    const previous = readTokenStore(env);
+    if (previous && (previous.profile ?? "read-write") !== profile) {
+      log(
+        `Warning: this replaces the ${previous.profile ?? "read-write"} sign-in stored at this path — ` +
+          "set HUBSPOT_TOKEN_STORE_PATH to keep both access levels side by side.",
+      );
+    }
     const filePath = writeTokenStore(store, env);
     log(
       `✔ Signed in${store.user ? ` as ${store.user}` : ""}${store.hubId ? ` (portal ${store.hubId})` : ""}. ` +
@@ -279,14 +408,23 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   }
 }
 
-/** Resolve the per-user OAuth credentials for the running server. */
-export function resolveTokenProvider(
+export interface Session {
+  provider: TokenProvider;
+  /** Scopes granted at login (from token introspection); undefined when unknown. */
+  grantedScopes?: string[];
+}
+
+/** Resolve the per-user OAuth credentials and granted scopes for the running server. */
+export function resolveSession(
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
-): TokenProvider {
+): Session {
   const store = readTokenStore(env);
   if (store) {
-    return new OAuthTokenProvider(store, fetchImpl, env);
+    return {
+      provider: new OAuthTokenProvider(store, fetchImpl, env),
+      grantedScopes: store.scopes,
+    };
   }
   throw new Error(
     "Not signed in to HubSpot. Run `npx hubspot-conversations-mcp login` " +

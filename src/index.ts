@@ -7,20 +7,22 @@ import { PACKAGE_NAME, parseClientSelection, runInstall, type InstallOptions } f
 import {
   clearTokenStore,
   DEFAULT_CALLBACK_PORT,
+  DEFAULT_OPTIONAL_SCOPES,
   DEFAULT_SCOPES,
   introspectAccessToken,
   readTokenStore,
-  resolveTokenProvider,
+  resolveSession,
   runLogin,
   tokenStorePath,
 } from "./oauth.js";
+import { grantsWriteAccess } from "./scopes.js";
 import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 import { runSetup } from "./setup.js";
 
 const HELP = `${PACKAGE_NAME} v${SERVER_VERSION}
 
 Authentication is per-user OAuth via your org's broker — see the README's
-"Per-user OAuth" section for the one-time org setup (HubSpot app + broker).
+"Org setup" section for the one-time org setup (HubSpot app + broker).
 
 Usage:
   ${PACKAGE_NAME}                  Run the MCP server on stdio (what MCP clients invoke)
@@ -35,7 +37,19 @@ Usage:
 Login options:
   --broker-url <url>           Your org's OAuth broker (or set HUBSPOT_OAUTH_BROKER_URL)
   --client-id <id>             Skip fetching the client ID from the broker
-  --scopes <a,b>               Scopes to request (default: ${DEFAULT_SCOPES.join(",")})
+  --scopes <a,b>               App-*required* scopes to request, sent in the authorize
+                               URL's scope param (default: the broker's advertised
+                               profile, else ${DEFAULT_SCOPES.join(",")}). Passing this
+                               disables all default optional scopes
+  --optional-scopes <a,b>      App-*optional* scopes to request, sent in optional_scope
+                               (default: from the broker, else ${DEFAULT_OPTIONAL_SCOPES.join(",")};
+                               none when --scopes is given). HubSpot rejects the consent
+                               screen if this split does not match the app's
+                               required/optional scope configuration
+  --read-only                  Sign in through the broker's *read-only app* — the token
+                               can never write and the server only offers read tools.
+                               Requires HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID/SECRET on the
+                               broker deployment (see the README's read-only section)
   --port <n>                   Local callback port (default: ${DEFAULT_CALLBACK_PORT} — must match
                                the redirect URL registered on the HubSpot app)
   --no-open                    Print the authorize URL without opening a browser
@@ -132,10 +146,23 @@ async function runLoginCli(argv: string[]): Promise<void> {
       "broker-url": { type: "string" },
       "client-id": { type: "string" },
       scopes: { type: "string" },
+      "optional-scopes": { type: "string" },
+      "read-only": { type: "boolean", default: false },
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
     },
   });
+  if (values["read-only"] && (values.scopes !== undefined || values["optional-scopes"] !== undefined)) {
+    throw new Error("--read-only and --scopes/--optional-scopes are mutually exclusive — pick one.");
+  }
+  const parseScopeList = (raw: string | undefined, flag: string): string[] | undefined => {
+    if (raw === undefined) return undefined;
+    const list = raw.split(/[\s,]+/).filter(Boolean);
+    if (list.length === 0) {
+      throw new Error(`${flag} was passed but contains no scopes — omit it to use the defaults.`);
+    }
+    return list;
+  };
   const brokerUrl = values["broker-url"] ?? process.env.HUBSPOT_OAUTH_BROKER_URL?.trim();
   if (!brokerUrl) {
     throw new Error(
@@ -150,7 +177,9 @@ async function runLoginCli(argv: string[]): Promise<void> {
   await runLogin({
     brokerUrl,
     clientId: values["client-id"],
-    scopes: values.scopes?.split(/[\s,]+/).filter(Boolean),
+    profile: values["read-only"] ? "read-only" : undefined,
+    scopes: parseScopeList(values.scopes, "--scopes"),
+    optionalScopes: parseScopeList(values["optional-scopes"], "--optional-scopes"),
     port,
     openBrowser: !values["no-open"],
   });
@@ -166,28 +195,50 @@ async function runWhoamiCli(): Promise<void> {
   }
   console.log(`Signed in via per-user OAuth (store: ${tokenStorePath()})`);
   console.log(`Broker: ${store.brokerUrl}`);
+  if (store.profile === "read-only") console.log("App profile: read-only");
   if (store.user) console.log(`User: ${store.user}`);
   if (store.hubId) console.log(`Portal: ${store.hubId}`);
-  if (store.scopes?.length) console.log(`Scopes: ${store.scopes.join(", ")}`);
+
+  // Prefer the token's live scopes; the recorded ones are a login-time snapshot.
+  const live = await introspectAccessToken(store.accessToken);
+  const scopes = live?.scopes?.length ? live.scopes : store.scopes;
+  if (scopes?.length) {
+    console.log(`Scopes: ${scopes.join(", ")}${live?.scopes?.length ? "" : " (recorded at login)"}`);
+    console.log(
+      grantsWriteAccess(scopes)
+        ? "Access: read + write"
+        : "Access: read-only (no write scopes granted — write tools are not offered)",
+    );
+  }
+  const sorted = (list?: string[]) => (list ? [...list].sort().join(" ") : undefined);
+  if (live?.scopes?.length && sorted(live.scopes) !== sorted(store.scopes)) {
+    console.log(
+      "Note: the token's live scopes differ from those recorded at login — re-run `login` " +
+        "so the server's tool gating matches.",
+    );
+  }
+
   const expiresIn = Math.round((store.expiresAt - Date.now()) / 1000);
   console.log(
     expiresIn > 0
       ? `Access token expires in ${expiresIn}s (auto-refreshed via the broker).`
       : "Access token expired — it will be refreshed on the next request.",
   );
-  const live = await introspectAccessToken(store.accessToken);
   if (live?.hubId) console.log(`Verified live against portal ${live.hubId}.`);
 }
 
 async function runServer(): Promise<void> {
   const config = loadConfig();
-  const provider = resolveTokenProvider();
+  const { provider, grantedScopes } = resolveSession();
   const client = new HubSpotClient(config, globalThis.fetch, provider);
-  const server = createServer(client, config);
+  const server = createServer(client, config, { grantedScopes });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout carries the MCP protocol — log to stderr only.
-  console.error(`${SERVER_NAME} v${SERVER_VERSION} running on stdio (per-user OAuth)`);
+  const readOnly = grantsWriteAccess(grantedScopes) === false;
+  console.error(
+    `${SERVER_NAME} v${SERVER_VERSION} running on stdio (per-user OAuth${readOnly ? ", read-only" : ""})`,
+  );
 }
 
 async function main(): Promise<void> {
