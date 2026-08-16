@@ -193,13 +193,11 @@ npm run bundle
 
 This produces a `.mcpb` file. Open it with Claude Desktop (or drag it into **Settings → Extensions**) for a one-click install. Run `npx -y hubspot-conversations-mcp login` once first — the extension uses the same per-user sign-in.
 
-## Publishing to npm
+## Releasing to npm
 
-```bash
-npm publish
-```
+Releases ship automatically from `main`. Bump `version` in [package.json](package.json) and [manifest.json](manifest.json) plus `SERVER_VERSION` in [server.ts](src/server.ts) — all three must match — and merge. The [release workflow](.github/workflows/release.yml) spots that the version isn't on npm yet, runs the tests, creates the `v<version>` tag + GitHub release with generated notes, and publishes that release to npm with provenance (auth via the `NPM_TOKEN` repo secret). Pushes without a version bump are no-ops.
 
-`prepublishOnly` builds and runs the full test suite first. The published package contains only `dist/`, `manifest.json`, README and LICENSE. Bump `version` in both [package.json](package.json) and [manifest.json](manifest.json) (and `SERVER_VERSION` in [server.ts](src/server.ts)) per release.
+`prepublishOnly` builds and runs the full test suite before the actual upload. The published package contains only `dist/`, `manifest.json`, README and LICENSE.
 
 ## Configuration
 
