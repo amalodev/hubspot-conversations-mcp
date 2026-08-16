@@ -54,6 +54,9 @@ The broker is a small **stateless service your org hosts** (free on Vercel, [api
    }
    ```
 
+   Both apps live behind the **same broker** — the read-only app's credentials go in a
+   second pair of env vars (next step), and `login --read-only` selects it.
+
    **Apps created from the pre-0.11 template** (where `conversations.write` sat in
    `requiredScopes`): either move it to `optionalScopes` as above (users re-authorize on
    their next login), or keep it required and have users sign in with
@@ -68,13 +71,21 @@ The broker is a small **stateless service your org hosts** (free on Vercel, [api
 
    The button clones this repo and prompts for the two environment variables (`HUBSPOT_OAUTH_CLIENT_ID`, `HUBSPOT_OAUTH_CLIENT_SECRET`). Alternatively create the Vercel project manually from your fork, or wire up CI deploys via [deploy-broker.yml](.github/workflows/deploy-broker.yml) with the `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` repo secrets.
 
-   A broker can also **advertise its app's scope profile** via two optional env vars:
-   `HUBSPOT_OAUTH_SCOPES` (required scopes, comma-separated) and
-   `HUBSPOT_OAUTH_OPTIONAL_SCOPES`. When set, `login` and `setup` request exactly those
-   scopes by default, so users can't accidentally request a split HubSpot would reject.
-   For a **read-only broker** (second deployment with the read-only app's credentials),
-   set `HUBSPOT_OAUTH_SCOPES=conversations.read` and leave the optional var unset —
-   then any plain `login --broker-url <read-only-broker>` is automatically read-only.
+   One deployment can front **both apps**:
+
+   | Env var | App |
+   |---|---|
+   | `HUBSPOT_OAUTH_CLIENT_ID` / `HUBSPOT_OAUTH_CLIENT_SECRET` | read + write (default) |
+   | `HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID` / `HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET` | read-only (optional) |
+
+   The client's `login --read-only` selects the read-only app, and the choice travels
+   with the tokens so refreshes use the right app's credentials. The broker's
+   `/api/config` advertises which apps exist and their scopes, so `login` and `setup`
+   request exactly the right split automatically. Optional fine-tuning:
+   `HUBSPOT_OAUTH_SCOPES` / `HUBSPOT_OAUTH_OPTIONAL_SCOPES` override what the default
+   app's logins request (e.g. to add custom-channel scopes), and
+   `HUBSPOT_OAUTH_READ_ONLY_SCOPES` / `HUBSPOT_OAUTH_READ_ONLY_OPTIONAL_SCOPES` do the
+   same for the read-only app (default: just `conversations.read`).
 
 3. **Share the broker URL** (e.g. `https://your-broker.vercel.app`) with the team — it is not a secret, and neither is the client ID (the CLI fetches it from the broker's `/api/config`). Setting `HUBSPOT_OAUTH_BROKER_URL` org-wide (dotfiles, MDM, onboarding docs) makes all commands flag-free.
 
@@ -91,7 +102,7 @@ npx -y hubspot-conversations-mcp setup
 The wizard walks through everything:
 
 1. **Broker** — asks whether your org already has a broker; if not, it shows the setup guide (and links back here). The URL is **verified live** against `/api/config` before continuing.
-2. **Sign in** — the access level (read & write, or read-only) comes from the broker's advertised scope profile when it has one, and is asked interactively otherwise; then your browser opens HubSpot's consent screen; sign in with your own HubSpot login. Tokens land on your machine and auto-refresh through the broker.
+2. **Sign in** — when the broker has a read-only app, the wizard asks which access level to sign in with; then your browser opens HubSpot's consent screen; sign in with your own HubSpot login. Tokens land on your machine and auto-refresh through the broker.
 3. **Agents** — pick which AI agents to configure with an arrow-key multiselect (↑/↓ to move, space to toggle): **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)). Each is configured automatically — no credentials are written to any config file.
 
 ### Manual / scripted
@@ -132,14 +143,15 @@ changelogs). The server will honestly show that: `whoami` reports `read + write`
 write tools stay registered, because the token really can write.
 
 **Genuinely read-only tokens therefore come from a second, read-only app** (org setup
-above): an app whose only conversations scope is `conversations.read`, behind its own
-broker deployment with `HUBSPOT_OAUTH_SCOPES=conversations.read` set. Tokens minted
-through that broker can never write, no matter what is requested. Sign in to it with a
-separate token store:
+above): an app whose only conversations scope is `conversations.read`, registered on the
+same broker via `HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID` / `HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET`.
+`login --read-only` signs in through that app — its tokens can never write, no matter
+what is requested — and the profile travels with the stored tokens so refreshes keep
+using the right app. Use a separate token store to keep it next to your main sign-in:
 
 ```bash
 HUBSPOT_TOKEN_STORE_PATH=~/.hubspot-conversations-mcp/tokens-ro.json \
-  npx -y hubspot-conversations-mcp login --broker-url https://your-readonly-broker.vercel.app
+  npx -y hubspot-conversations-mcp login --broker-url https://your-broker.vercel.app --read-only
 ```
 
 Then register a second MCP entry pointing at that store, e.g. for Claude Code:
@@ -153,7 +165,8 @@ ever sees the 13 read tools — and its token couldn't write even outside MCP.
 
 Details:
 
-- When the broker advertises its scope profile, plain `login` requests exactly that; the setup wizard shows the resulting access level instead of asking. Against a broker without a profile, `--read-only` requests only `conversations.read` — which yields a truly read-only token **only if the app was never granted write on that portal** (otherwise the existing grant wins, see above).
+- `--read-only` requires the broker to have the read-only app configured (the setup wizard offers the choice only when it does, and `login` fails with a pointer here otherwise). Without a second app, `--scopes conversations.read` requests a reduced grant from the main app — which yields a truly read-only token **only if the app was never granted write on that portal** (otherwise the existing grant wins, see above).
+- When the broker advertises a scope profile for its default app (`HUBSPOT_OAUTH_SCOPES`), plain `login` requests exactly that; the setup wizard shows the resulting access level instead of asking.
 - `--scopes` sets the app-*required* scopes and `--optional-scopes` the app-*optional* ones, e.g. `--optional-scopes conversations.write,conversations.custom_channels.read,conversations.custom_channels.write` — custom-channel tools are likewise only offered when the `conversations.custom_channels.*` scopes were granted. HubSpot rejects the consent screen if the split does not match the app's scope configuration.
 - The rare token store without recorded scopes (scope introspection failed during a pre-0.11 login) makes the server offer **all** tools, with HubSpot alone enforcing access; since 0.11 `login` always records scopes, falling back to the requested ones. Re-run `login` to fix such a store.
 - **Upgrading from 0.10**: tokens signed in with the default scopes never carried `conversations.custom_channels.*`, so the 8 custom-channel tools disappear from the tool list on upgrade — they previously appeared but always failed with 403. Re-login with `--optional-scopes` including those scopes (and the app updated to offer them) to use them.
@@ -164,9 +177,9 @@ Details:
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/config` | Public app metadata (client ID, plus the app's scope profile when `HUBSPOT_OAUTH_SCOPES` is set) so users only need the broker URL |
-| `POST /api/exchange` | `{code, redirect_uri}` → tokens; redirect URIs are restricted to localhost |
-| `POST /api/refresh` | `{refresh_token}` → fresh access token |
+| `GET /api/config` | Public app metadata (client IDs and scope profiles of the configured apps) so users only need the broker URL |
+| `POST /api/exchange` | `{code, redirect_uri, profile?}` → tokens; `profile: "read-only"` uses the read-only app; redirect URIs are restricted to localhost |
+| `POST /api/refresh` | `{refresh_token, profile?}` → fresh access token from the same app the tokens came from |
 
 ### One-click bundle for Claude Desktop (MCPB)
 
@@ -197,7 +210,7 @@ npm publish
 | `HUBSPOT_CONVERSATIONS_API_VERSION` | Default `2026-09-beta` — update here when the API graduates from beta |
 | `HUBSPOT_CUSTOM_CHANNELS_API_VERSION` | Default `2026-03` |
 
-On the **broker deployment** (never on user machines): `HUBSPOT_OAUTH_CLIENT_ID` and `HUBSPOT_OAUTH_CLIENT_SECRET`, plus optionally `HUBSPOT_OAUTH_SCOPES` / `HUBSPOT_OAUTH_OPTIONAL_SCOPES` to advertise the app's scope profile (e.g. `HUBSPOT_OAUTH_SCOPES=conversations.read` on a read-only broker).
+On the **broker deployment** (never on user machines): `HUBSPOT_OAUTH_CLIENT_ID` / `HUBSPOT_OAUTH_CLIENT_SECRET` (read + write app), optionally `HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID` / `HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET` (read-only app used by `login --read-only`), and optionally `HUBSPOT_OAUTH_SCOPES` / `HUBSPOT_OAUTH_OPTIONAL_SCOPES` (+ `_READ_ONLY_` variants) to override the scopes logins request.
 
 ## Tools
 

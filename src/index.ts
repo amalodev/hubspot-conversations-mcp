@@ -10,7 +10,6 @@ import {
   DEFAULT_OPTIONAL_SCOPES,
   DEFAULT_SCOPES,
   introspectAccessToken,
-  READ_ONLY_SCOPES,
   readTokenStore,
   resolveSession,
   runLogin,
@@ -47,9 +46,10 @@ Login options:
                                none when --scopes is given). HubSpot rejects the consent
                                screen if this split does not match the app's
                                required/optional scope configuration
-  --read-only                  Request a read-only token (${READ_ONLY_SCOPES.join(",")}) — the
-                               server then only offers read tools. Requires
-                               conversations.write to be optional on the HubSpot app
+  --read-only                  Sign in through the broker's *read-only app* — the token
+                               can never write and the server only offers read tools.
+                               Requires HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID/SECRET on the
+                               broker deployment (see the README's read-only section)
   --port <n>                   Local callback port (default: ${DEFAULT_CALLBACK_PORT} — must match
                                the redirect URL registered on the HubSpot app)
   --no-open                    Print the authorize URL without opening a browser
@@ -177,10 +177,9 @@ async function runLoginCli(argv: string[]): Promise<void> {
   await runLogin({
     brokerUrl,
     clientId: values["client-id"],
-    scopes: values["read-only"] ? [...READ_ONLY_SCOPES] : parseScopeList(values.scopes, "--scopes"),
-    optionalScopes: values["read-only"]
-      ? []
-      : parseScopeList(values["optional-scopes"], "--optional-scopes"),
+    profile: values["read-only"] ? "read-only" : undefined,
+    scopes: parseScopeList(values.scopes, "--scopes"),
+    optionalScopes: parseScopeList(values["optional-scopes"], "--optional-scopes"),
     port,
     openBrowser: !values["no-open"],
   });
@@ -196,6 +195,7 @@ async function runWhoamiCli(): Promise<void> {
   }
   console.log(`Signed in via per-user OAuth (store: ${tokenStorePath()})`);
   console.log(`Broker: ${store.brokerUrl}`);
+  if (store.profile === "read-only") console.log("App profile: read-only");
   if (store.user) console.log(`User: ${store.user}`);
   if (store.hubId) console.log(`Portal: ${store.hubId}`);
 

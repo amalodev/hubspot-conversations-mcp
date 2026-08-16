@@ -89,20 +89,79 @@ describe("OAuth broker handlers", () => {
     });
   });
 
-  it("exposes only the client ID via /api/config", async () => {
+  it("exposes the client ID and read-write profile via /api/config", async () => {
     const response = configHandler();
-    expect(await response.json()).toEqual({ clientId: "client-123" });
+    expect(await response.json()).toEqual({
+      clientId: "client-123",
+      profiles: { "read-write": { clientId: "client-123" } },
+    });
   });
 
   it("advertises the app's scope profile via /api/config when configured", async () => {
     vi.stubEnv("HUBSPOT_OAUTH_SCOPES", "conversations.read");
     vi.stubEnv("HUBSPOT_OAUTH_OPTIONAL_SCOPES", "conversations.write, conversations.custom_channels.read");
     const response = configHandler();
-    expect(await response.json()).toEqual({
+    expect(await response.json()).toMatchObject({
       clientId: "client-123",
       scopes: ["conversations.read"],
       optionalScopes: ["conversations.write", "conversations.custom_channels.read"],
     });
+  });
+
+  it("advertises the read-only app with default scopes when its env pair is set", async () => {
+    vi.stubEnv("HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID", "ro-client");
+    vi.stubEnv("HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET", "ro-secret");
+    const response = configHandler();
+    expect(await response.json()).toEqual({
+      clientId: "client-123",
+      profiles: {
+        "read-write": { clientId: "client-123" },
+        "read-only": { clientId: "ro-client", scopes: ["conversations.read"], optionalScopes: [] },
+      },
+    });
+  });
+
+  it("exchanges and refreshes against the read-only app when profile is read-only", async () => {
+    vi.stubEnv("HUBSPOT_OAUTH_READ_ONLY_CLIENT_ID", "ro-client");
+    vi.stubEnv("HUBSPOT_OAUTH_READ_ONLY_CLIENT_SECRET", "ro-secret");
+    const calls = stubHubSpotToken({ json: { access_token: "at", expires_in: 1800 } });
+
+    await exchangeHandler(
+      new Request("https://broker.test/api/exchange", {
+        method: "POST",
+        body: JSON.stringify({
+          code: "c1",
+          redirect_uri: "http://localhost:4573/callback",
+          profile: "read-only",
+        }),
+      }),
+    );
+    expect(Object.fromEntries(calls[0].body)).toMatchObject({
+      client_id: "ro-client",
+      client_secret: "ro-secret",
+    });
+
+    await refreshHandler(
+      new Request("https://broker.test/api/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: "rt", profile: "read-only" }),
+      }),
+    );
+    expect(Object.fromEntries(calls[1].body)).toMatchObject({
+      client_id: "ro-client",
+      client_secret: "ro-secret",
+    });
+  });
+
+  it("rejects a read-only profile request when no read-only app is configured", async () => {
+    const response = await refreshHandler(
+      new Request("https://broker.test/api/refresh", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: "rt", profile: "read-only" }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "unknown_profile" });
   });
 
   it("returns broker_not_configured without env", async () => {
@@ -257,6 +316,35 @@ describe("OAuthTokenProvider", () => {
     const persisted = JSON.parse(readFileSync(env.HUBSPOT_TOKEN_STORE_PATH!, "utf8")) as TokenStore;
     expect(persisted.accessToken).toBe("fresh");
     expect(persisted.refreshToken).toBe("rt-1");
+  });
+
+  it("refreshes read-only tokens with the read-only profile so the broker picks the right app", async () => {
+    const store: TokenStore = {
+      version: 1,
+      brokerUrl: "https://broker.test",
+      accessToken: "stale",
+      refreshToken: "rt-ro",
+      expiresAt: Date.now() - 1000,
+      scopes: ["oauth", "conversations.read"],
+      profile: "read-only",
+    };
+    writeTokenStore(store, env);
+
+    const bodies: unknown[] = [];
+    const fetchStub = (async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ access_token: "fresh-ro", expires_in: 1800 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const provider = new OAuthTokenProvider(store, fetchStub, env);
+    expect(await provider.getAuthHeaders()).toEqual({ authorization: "Bearer fresh-ro" });
+    expect(bodies[0]).toEqual({ refresh_token: "rt-ro", profile: "read-only" });
+    const persisted = JSON.parse(readFileSync(env.HUBSPOT_TOKEN_STORE_PATH!, "utf8")) as TokenStore;
+    expect(persisted.profile).toBe("read-only");
+    expect(persisted.scopes).toEqual(["oauth", "conversations.read"]);
   });
 
   it("adopts a replaced on-disk store instead of clobbering it with the stale grant", async () => {
