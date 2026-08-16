@@ -10,6 +10,7 @@ import {
   brokerEndpoint,
   buildAuthorizeUrl,
   readTokenStore,
+  resolveRequestedScopes,
   storeFromTokenResponse,
   tokenStorePath,
   writeTokenStore,
@@ -93,6 +94,17 @@ describe("OAuth broker handlers", () => {
     expect(await response.json()).toEqual({ clientId: "client-123" });
   });
 
+  it("advertises the app's scope profile via /api/config when configured", async () => {
+    vi.stubEnv("HUBSPOT_OAUTH_SCOPES", "conversations.read");
+    vi.stubEnv("HUBSPOT_OAUTH_OPTIONAL_SCOPES", "conversations.write, conversations.custom_channels.read");
+    const response = configHandler();
+    expect(await response.json()).toEqual({
+      clientId: "client-123",
+      scopes: ["conversations.read"],
+      optionalScopes: ["conversations.write", "conversations.custom_channels.read"],
+    });
+  });
+
   it("returns broker_not_configured without env", async () => {
     vi.unstubAllEnvs();
     vi.stubEnv("HUBSPOT_OAUTH_CLIENT_ID", "");
@@ -164,6 +176,36 @@ describe("token store", () => {
     expect(url.searchParams.get("optional_scope")).toBe(
       "conversations.write conversations.custom_channels.write",
     );
+  });
+
+  it("resolves requested scopes: explicit flags > broker profile > defaults", () => {
+    // Built-in defaults.
+    expect(resolveRequestedScopes({})).toEqual({
+      scopes: ["conversations.read"],
+      optionalScopes: ["conversations.write"],
+    });
+    // A broker-advertised profile replaces the defaults entirely — a
+    // read-only broker advertising just conversations.read requests no write.
+    expect(resolveRequestedScopes({}, { scopes: ["conversations.read"] })).toEqual({
+      scopes: ["conversations.read"],
+      optionalScopes: [],
+    });
+    expect(
+      resolveRequestedScopes({}, { scopes: ["a.read"], optionalScopes: ["a.write"] }),
+    ).toEqual({ scopes: ["a.read"], optionalScopes: ["a.write"] });
+    // Explicit scopes take full control, regardless of broker profile.
+    expect(
+      resolveRequestedScopes({ scopes: ["x.read"] }, { scopes: ["a.read"], optionalScopes: ["a.write"] }),
+    ).toEqual({ scopes: ["x.read"], optionalScopes: [] });
+    // --read-only shape: explicit read + explicitly no optional scopes.
+    expect(resolveRequestedScopes({ scopes: ["conversations.read"], optionalScopes: [] })).toEqual({
+      scopes: ["conversations.read"],
+      optionalScopes: [],
+    });
+    // Explicit optional scopes override the broker's optional list.
+    expect(
+      resolveRequestedScopes({ optionalScopes: ["b.write"] }, { scopes: ["a.read"], optionalScopes: ["a.write"] }),
+    ).toEqual({ scopes: ["a.read"], optionalScopes: ["b.write"] });
   });
 
   it("maps token responses and keeps the previous refresh token", () => {

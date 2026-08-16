@@ -13,13 +13,32 @@ const HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token";
 export interface BrokerEnv {
   clientId: string;
   clientSecret: string;
+  /**
+   * Optional scope profile advertised via /api/config so `login` requests
+   * exactly what this broker's app is configured for. HUBSPOT_OAUTH_SCOPES is
+   * the switch: when set, clients use it for the authorize URL's `scope`
+   * param and HUBSPOT_OAUTH_OPTIONAL_SCOPES (default none) for
+   * `optional_scope`, instead of their built-in defaults.
+   */
+  scopes?: string[];
+  optionalScopes?: string[];
+}
+
+function parseScopeList(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return raw.split(/[\s,]+/).filter(Boolean);
 }
 
 export function readBrokerEnv(env: NodeJS.ProcessEnv = process.env): BrokerEnv | undefined {
   const clientId = env.HUBSPOT_OAUTH_CLIENT_ID?.trim();
   const clientSecret = env.HUBSPOT_OAUTH_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return undefined;
-  return { clientId, clientSecret };
+  return {
+    clientId,
+    clientSecret,
+    scopes: parseScopeList(env.HUBSPOT_OAUTH_SCOPES),
+    optionalScopes: parseScopeList(env.HUBSPOT_OAUTH_OPTIONAL_SCOPES),
+  };
 }
 
 /** Only localhost redirects are accepted — auth codes can never leave the user's machine. */
@@ -124,5 +143,9 @@ export function configHandler(): Response {
   if (!env) {
     return jsonResponse(500, { error: "broker_not_configured" });
   }
-  return jsonResponse(200, { clientId: env.clientId });
+  return jsonResponse(200, {
+    clientId: env.clientId,
+    ...(env.scopes?.length ? { scopes: env.scopes } : {}),
+    ...(env.optionalScopes ? { optionalScopes: env.optionalScopes } : {}),
+  });
 }

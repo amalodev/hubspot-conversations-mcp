@@ -222,6 +222,36 @@ function waitForCallback(
   });
 }
 
+/** Scope profile a broker may advertise via /api/config (matching its app's config). */
+export interface BrokerScopeProfile {
+  scopes?: string[];
+  optionalScopes?: string[];
+}
+
+/**
+ * Resolve which scopes a login requests: explicit options win, then the
+ * broker-advertised profile, then the built-in defaults. An explicit `scopes`
+ * list takes full control — no optional scopes are added to it implicitly.
+ */
+export function resolveRequestedScopes(
+  options: Pick<LoginOptions, "scopes" | "optionalScopes">,
+  broker: BrokerScopeProfile = {},
+): { scopes: string[]; optionalScopes: string[] } {
+  if (options.scopes?.length) {
+    return { scopes: options.scopes, optionalScopes: options.optionalScopes ?? [] };
+  }
+  if (broker.scopes?.length) {
+    return {
+      scopes: broker.scopes,
+      optionalScopes: options.optionalScopes ?? broker.optionalScopes ?? [],
+    };
+  }
+  return {
+    scopes: DEFAULT_SCOPES,
+    optionalScopes: options.optionalScopes ?? DEFAULT_OPTIONAL_SCOPES,
+  };
+}
+
 export interface LoginOptions {
   brokerUrl: string;
   clientId?: string;
@@ -245,15 +275,17 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const env = options.env ?? process.env;
   const port = options.port ?? DEFAULT_CALLBACK_PORT;
-  const scopes = options.scopes?.length ? options.scopes : DEFAULT_SCOPES;
-  const optionalScopes =
-    options.optionalScopes ?? (options.scopes?.length ? [] : DEFAULT_OPTIONAL_SCOPES);
   const brokerUrl = options.brokerUrl.replace(/\/+$/, "");
 
   let clientId = options.clientId;
+  let brokerProfile: BrokerScopeProfile = {};
   if (!clientId) {
     const response = await fetchImpl(brokerEndpoint(brokerUrl, "config"));
-    const data = (await response.json().catch(() => ({}))) as { clientId?: string };
+    const data = (await response.json().catch(() => ({}))) as {
+      clientId?: string;
+      scopes?: unknown;
+      optionalScopes?: unknown;
+    };
     if (!response.ok || !data.clientId) {
       throw new Error(
         `Could not fetch the app's client ID from the broker (${brokerEndpoint(brokerUrl, "config")}). ` +
@@ -261,7 +293,11 @@ export async function runLogin(options: LoginOptions): Promise<TokenStore> {
       );
     }
     clientId = data.clientId;
+    const asScopeList = (value: unknown): string[] | undefined =>
+      Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+    brokerProfile = { scopes: asScopeList(data.scopes), optionalScopes: asScopeList(data.optionalScopes) };
   }
+  const { scopes, optionalScopes } = resolveRequestedScopes(options, brokerProfile);
 
   const redirectUri = `http://localhost:${port}/callback`;
   const state = randomUUID();

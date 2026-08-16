@@ -39,12 +39,14 @@ Login options:
   --broker-url <url>           Your org's OAuth broker (or set HUBSPOT_OAUTH_BROKER_URL)
   --client-id <id>             Skip fetching the client ID from the broker
   --scopes <a,b>               App-*required* scopes to request, sent in the authorize
-                               URL's scope param (default: ${DEFAULT_SCOPES.join(",")}).
-                               Passing this disables the default optional scopes
+                               URL's scope param (default: the broker's advertised
+                               profile, else ${DEFAULT_SCOPES.join(",")}). Passing this
+                               disables all default optional scopes
   --optional-scopes <a,b>      App-*optional* scopes to request, sent in optional_scope
-                               (default: ${DEFAULT_OPTIONAL_SCOPES.join(",")} unless --scopes is given).
-                               HubSpot rejects the consent screen if this split does not
-                               match the app's required/optional scope configuration
+                               (default: from the broker, else ${DEFAULT_OPTIONAL_SCOPES.join(",")};
+                               none when --scopes is given). HubSpot rejects the consent
+                               screen if this split does not match the app's
+                               required/optional scope configuration
   --read-only                  Request a read-only token (${READ_ONLY_SCOPES.join(",")}) — the
                                server then only offers read tools. Requires
                                conversations.write to be optional on the HubSpot app
