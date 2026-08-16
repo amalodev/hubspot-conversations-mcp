@@ -7,3 +7,4 @@ dist/
 *.tgz
 .vercel/
 docs/superpowers/specs/
+.vercel

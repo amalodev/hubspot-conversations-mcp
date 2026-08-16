@@ -19,7 +19,7 @@ export interface SetupFlags {
 }
 
 const README_OAUTH_URL =
-  "https://github.com/amalodev/hubspot-conversations-mcp#per-user-oauth-team-setup";
+  "https://github.com/amalodev/hubspot-conversations-mcp#org-setup-one-time-10-minutes";
 
 const BROKER_GUIDE = `A broker is a small stateless service your org hosts (free on Vercel).
 It holds your HubSpot app's client secret so employees never see it,

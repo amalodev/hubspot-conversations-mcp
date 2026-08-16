@@ -22,7 +22,7 @@ import { runSetup } from "./setup.js";
 const HELP = `${PACKAGE_NAME} v${SERVER_VERSION}
 
 Authentication is per-user OAuth via your org's broker — see the README's
-"Per-user OAuth" section for the one-time org setup (HubSpot app + broker).
+"Org setup" section for the one-time org setup (HubSpot app + broker).
 
 Usage:
   ${PACKAGE_NAME}                  Run the MCP server on stdio (what MCP clients invoke)

@@ -31,11 +31,13 @@ The broker is a small **stateless service your org hosts** (free on Vercel, [api
    }
    ```
 
-   `conversations.write` is **optional** so a portal that never needs write can install
-   without it. The CLI mirrors this split: the default `login` requests
-   `conversations.read` via the authorize URL's `scope` parameter and
-   `conversations.write` via `optional_scope` — HubSpot rejects the consent screen
-   whenever that split does not match the app's configuration. If your org uses custom
+   `conversations.write` is **optional**, matching how the CLI requests it: the default
+   `login` sends `conversations.read` in the authorize URL's `scope` parameter and
+   `conversations.write` in `optional_scope` — HubSpot rejects the consent screen
+   whenever that split does not match the app's configuration — except the `oauth`
+   scope, which HubSpot grants automatically without it being requested. (Optional
+   scopes are granted automatically when the portal supports them; a read-only sign-in
+   means not requesting write at all — see below.) If your org uses custom
    channels, add `conversations.custom_channels.read` /
    `conversations.custom_channels.write` to `optionalScopes` as well and request them at
    login via `--optional-scopes`.
@@ -102,7 +104,7 @@ npx -y hubspot-conversations-mcp setup
 The wizard walks through everything:
 
 1. **Broker** — asks whether your org already has a broker; if not, it shows the setup guide (and links back here). The URL is **verified live** against `/api/config` before continuing.
-2. **Sign in** — when the broker has a read-only app, the wizard asks which access level to sign in with; then your browser opens HubSpot's consent screen; sign in with your own HubSpot login. Tokens land on your machine and auto-refresh through the broker.
+2. **Sign in** — the wizard asks which access level to sign in with: read & write, or read-only (via the broker's read-only app when it has one, otherwise as a best-effort reduced-scope request). Brokers that advertise a scope profile decide the level themselves and skip the question. Then your browser opens HubSpot's consent screen; sign in with your own HubSpot login. Tokens land on your machine and auto-refresh through the broker.
 3. **Agents** — pick which AI agents to configure with an arrow-key multiselect (↑/↓ to move, space to toggle): **Claude Desktop**, **Claude Code**, and/or **Hermes** ([Nous Research hermes-agent](https://hermes-agent.nousresearch.com)). Each is configured automatically — no credentials are written to any config file.
 
 ### Manual / scripted
@@ -165,8 +167,8 @@ ever sees the 13 read tools — and its token couldn't write even outside MCP.
 
 Details:
 
-- `--read-only` requires the broker to have the read-only app configured (the setup wizard offers the choice only when it does, and `login` fails with a pointer here otherwise). Without a second app, `--scopes conversations.read` requests a reduced grant from the main app — which yields a truly read-only token **only if the app was never granted write on that portal** (otherwise the existing grant wins, see above).
-- When the broker advertises a scope profile for its default app (`HUBSPOT_OAUTH_SCOPES`), plain `login` requests exactly that; the setup wizard shows the resulting access level instead of asking.
+- `--read-only` requires the broker to have the read-only app configured (`login` fails with a pointer here otherwise). Without a second app, the wizard's "Read-only (best effort)" choice — or `--scopes conversations.read` — requests a reduced grant from the main app, which yields a truly read-only token **only if the app was never granted write on that portal** (otherwise the existing grant wins, see above).
+- When the broker advertises a scope profile for its default app (`HUBSPOT_OAUTH_SCOPES`), plain `login` requests exactly that; a wizard run against such a broker (with no read-only app) shows the resulting access level instead of asking.
 - `--scopes` sets the app-*required* scopes and `--optional-scopes` the app-*optional* ones, e.g. `--optional-scopes conversations.write,conversations.custom_channels.read,conversations.custom_channels.write` — custom-channel tools are likewise only offered when the `conversations.custom_channels.*` scopes were granted. HubSpot rejects the consent screen if the split does not match the app's scope configuration.
 - The rare token store without recorded scopes (scope introspection failed during a pre-0.11 login) makes the server offer **all** tools, with HubSpot alone enforcing access; since 0.11 `login` always records scopes, falling back to the requested ones. Re-run `login` to fix such a store.
 - **Upgrading from 0.10**: tokens signed in with the default scopes never carried `conversations.custom_channels.*`, so the 8 custom-channel tools disappear from the tool list on upgrade — they previously appeared but always failed with 403. Re-login with `--optional-scopes` including those scopes (and the app updated to offer them) to use them.
